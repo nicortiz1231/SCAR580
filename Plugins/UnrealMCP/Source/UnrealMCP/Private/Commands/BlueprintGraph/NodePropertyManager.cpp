@@ -25,6 +25,7 @@
 #include "Kismet/KismetSystemLibrary.h"
 #include "EditorAssetLibrary.h"
 #include "Json.h"
+#include "UObject/Class.h"
 
 TSharedPtr<FJsonObject> FNodePropertyManager::SetNodeProperty(const TSharedPtr<FJsonObject>& Params)
 {
@@ -385,6 +386,51 @@ bool FNodePropertyManager::SetPrintNodeProperty(
 			{
 				DurationPin->DefaultValue = FString::SanitizeFloat(DurationValue);
 				return true;
+			}
+		}
+	}
+
+	// Handle any class/object pin by matching the pin name directly.
+	// This enables setting pins like ActorClass on GetAllActorsOfClass.
+	{
+		FString ClassPath;
+		if (Value->TryGetString(ClassPath))
+		{
+			UEdGraphPin* TargetPin = PrintNode->FindPin(*PropertyName);
+			if (TargetPin &&
+				(TargetPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Class ||
+				 TargetPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Object))
+			{
+				// Try loading the class directly (handles _C suffix paths)
+				UObject* LoadedObj = StaticLoadObject(UObject::StaticClass(), nullptr, *ClassPath);
+				if (!LoadedObj)
+				{
+					// Strip _C suffix and try loading the Blueprint, then use its GeneratedClass
+					FString BPPath = ClassPath;
+					if (BPPath.EndsWith(TEXT("_C")))
+					{
+						BPPath = BPPath.LeftChop(2);
+						// Ensure the path has the right asset suffix
+						int32 DotIdx;
+						if (BPPath.FindLastChar('.', DotIdx))
+						{
+							BPPath = BPPath.Left(DotIdx);
+						}
+						BPPath += TEXT(".") + FPaths::GetBaseFilename(BPPath);
+					}
+					UBlueprint* BP = LoadObject<UBlueprint>(nullptr, *BPPath);
+					if (BP && BP->GeneratedClass)
+					{
+						LoadedObj = BP->GeneratedClass;
+					}
+				}
+
+				if (LoadedObj)
+				{
+					TargetPin->DefaultObject = LoadedObj;
+					PrintNode->ReconstructNode();
+					return true;
+				}
 			}
 		}
 	}
