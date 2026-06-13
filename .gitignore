@@ -1,0 +1,22 @@
+# Unreal Engine build artifacts
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+*.VC.db
+*.opensdf
+*.opendb
+*.sdf
+*.suo
+*.xcworkspace
+*.xcodeproj
+
+# Plugin compiled binaries (source is kept)
+Plugins/UnrealMCP/Binaries/
+Plugins/UnrealMCP/Intermediate/
+
+# Demo/example content from asset kit (not needed, 800MB+)
+Content/BodycamFPSKIT/Demo/
+
+# Crash reports
+CrashReportClient/
