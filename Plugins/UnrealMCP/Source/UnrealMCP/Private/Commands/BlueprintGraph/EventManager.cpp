@@ -4,6 +4,7 @@
 #include "K2Node_Event.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "EditorAssetLibrary.h"
+#include "GameFramework/Actor.h"
 
 TSharedPtr<FJsonObject> FEventManager::AddEventNode(const TSharedPtr<FJsonObject>& Params)
 {
@@ -103,17 +104,34 @@ UK2Node_Event* FEventManager::CreateEventNode(UEdGraph* Graph, const FString& Ev
 		return nullptr;
 	}
 
-	UFunction* EventFunction = BlueprintClass->FindFunctionByName(FName(*EventName));
+	// Always search for the function in AActor (the canonical base class for events like
+	// ReceiveBeginPlay, ReceiveTick, etc.) to avoid stale-generated-class lookup failures.
+	static const TMap<FString, UClass*> EventClassMap = {
+		{ TEXT("ReceiveBeginPlay"), AActor::StaticClass() },
+		{ TEXT("ReceiveTick"),      AActor::StaticClass() },
+		{ TEXT("ReceiveDestroyed"), AActor::StaticClass() },
+		{ TEXT("ReceiveEndPlay"),   AActor::StaticClass() },
+	};
+
+	UClass* SearchClass = EventClassMap.FindRef(EventName);
+	if (!SearchClass)
+	{
+		SearchClass = BlueprintClass;
+	}
+
+	UFunction* EventFunction = SearchClass->FindFunctionByName(FName(*EventName));
 
 	if (EventFunction)
 	{
 		EventNode = NewObject<UK2Node_Event>(Graph);
-		EventNode->EventReference.SetExternalMember(FName(*EventName), BlueprintClass);
+		EventNode->EventReference.SetExternalMember(FName(*EventName), SearchClass);
+		EventNode->bOverrideFunction = true;
 		EventNode->NodePosX = static_cast<int32>(Position.X);
 		EventNode->NodePosY = static_cast<int32>(Position.Y);
 		Graph->AddNode(EventNode, true);
 		EventNode->PostPlacedNewNode();
 		EventNode->AllocateDefaultPins();
+		EventNode->CreateNewGuid();
 
 		UE_LOG(LogTemp, Display, TEXT("F18: Created new event node '%s' (ID: %s)"),
 			*EventName, *EventNode->NodeGuid.ToString());
@@ -136,7 +154,10 @@ UK2Node_Event* FEventManager::FindExistingEventNode(UEdGraph* Graph, const FStri
 	for (UEdGraphNode* Node : Graph->Nodes)
 	{
 		UK2Node_Event* EventNode = Cast<UK2Node_Event>(Node);
-		if (EventNode && EventNode->EventReference.GetMemberName() == FName(*EventName))
+		if (EventNode
+			&& EventNode->NodeGuid.IsValid()
+			&& EventNode->NodeGuid != FGuid()
+			&& EventNode->EventReference.GetMemberName() == FName(*EventName))
 		{
 			return EventNode;
 		}

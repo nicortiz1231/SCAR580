@@ -1,4 +1,5 @@
 #include "Commands/BlueprintGraph/NodeManager.h"
+#include "GameFramework/Actor.h"
 #include "Commands/BlueprintGraph/Nodes/ControlFlowNodes.h"
 #include "Commands/BlueprintGraph/Nodes/DataNodes.h"
 #include "Commands/BlueprintGraph/Nodes/UtilityNodes.h"
@@ -14,6 +15,7 @@
 #include "K2Node_VariableSet.h"
 #include "K2Node_PromotableOperator.h"
 #include "K2Node_IfThenElse.h"
+#include "K2Node_GetSubsystem.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "KismetCompiler.h"
@@ -213,6 +215,34 @@ TSharedPtr<FJsonObject> FBlueprintNodeManager::AddNode(const TSharedPtr<FJsonObj
 	{
 		NewNode = CreateEventNode(Graph, NodeParams);
 	}
+	else if (NodeType.Equals(TEXT("GetSubsystemFromPC"), ESearchCase::IgnoreCase))
+	{
+		// Get the subsystem class name from params, defaulting to EnhancedInputLocalPlayerSubsystem
+		FString SubsystemClassName;
+		if (!NodeParams->TryGetStringField(TEXT("subsystem_class"), SubsystemClassName))
+		{
+			SubsystemClassName = TEXT("/Script/EnhancedInput.EnhancedInputLocalPlayerSubsystem");
+		}
+
+		UClass* SubsystemClass = Cast<UClass>(StaticFindObject(UClass::StaticClass(), nullptr, *SubsystemClassName));
+		if (!SubsystemClass)
+		{
+			return CreateErrorResponse(FString::Printf(TEXT("Could not find subsystem class: %s"), *SubsystemClassName));
+		}
+
+		UK2Node_GetSubsystemFromPC* SubNode = NewObject<UK2Node_GetSubsystemFromPC>(Graph);
+		SubNode->Initialize(SubsystemClass);
+		Graph->AddNode(SubNode, false, false);
+		SubNode->AllocateDefaultPins();
+
+		double PosX = 0.0, PosY = 0.0;
+		NodeParams->TryGetNumberField(TEXT("pos_x"), PosX);
+		NodeParams->TryGetNumberField(TEXT("pos_y"), PosY);
+		SubNode->NodePosX = (int32)PosX;
+		SubNode->NodePosY = (int32)PosY;
+
+		NewNode = SubNode;
+	}
 	else
 	{
 		return CreateErrorResponse(FString::Printf(TEXT("Unknown node type: %s"), *NodeType));
@@ -305,16 +335,19 @@ UK2Node_Event* FBlueprintNodeManager::CreateEventNode(UEdGraph* Graph, const TSh
 		return nullptr;
 	}
 
-	if (EventType.Equals(TEXT("BeginPlay"), ESearchCase::IgnoreCase))
+	// Map friendly event names to their UFunction names and owning classes
+	static const TMap<FString, TTuple<FName, UClass*>> EventMap = {
+		{ TEXT("beginplay"), MakeTuple(FName(TEXT("ReceiveBeginPlay")), AActor::StaticClass()) },
+		{ TEXT("tick"),      MakeTuple(FName(TEXT("ReceiveTick")),      AActor::StaticClass()) },
+		{ TEXT("destroyed"), MakeTuple(FName(TEXT("ReceiveDestroyed")), AActor::StaticClass()) },
+		{ TEXT("endplay"),   MakeTuple(FName(TEXT("ReceiveEndPlay")),   AActor::StaticClass()) },
+	};
+
+	FString EventTypeLower = EventType.ToLower();
+	const TTuple<FName, UClass*>* Found = EventMap.Find(EventTypeLower);
+	if (Found)
 	{
-		// Use direct function name - ReceiveBeginPlay is protected
-		EventNode->EventReference.SetExternalDelegateMember(FName(TEXT("ReceiveBeginPlay")));
-		EventNode->bOverrideFunction = true;
-	}
-	else if (EventType.Equals(TEXT("Tick"), ESearchCase::IgnoreCase))
-	{
-		// Use direct function name - ReceiveTick is protected
-		EventNode->EventReference.SetExternalDelegateMember(FName(TEXT("ReceiveTick")));
+		EventNode->EventReference.SetExternalMember(Found->Get<0>(), Found->Get<1>());
 		EventNode->bOverrideFunction = true;
 	}
 	else
@@ -612,6 +645,26 @@ TSharedPtr<FJsonObject> FBlueprintNodeManager::CreateSuccessResponse(const UK2No
 	Response->SetStringField(TEXT("node_type"), NodeType);
 	Response->SetNumberField(TEXT("pos_x"), Node->NodePosX);
 	Response->SetNumberField(TEXT("pos_y"), Node->NodePosY);
+
+	// Include pin info to help with subsequent connect_nodes calls
+	TArray<TSharedPtr<FJsonValue>> InputPins;
+	TArray<TSharedPtr<FJsonValue>> OutputPins;
+	for (const UEdGraphPin* Pin : Node->Pins)
+	{
+		if (Pin)
+		{
+			TSharedPtr<FJsonObject> PinObj = MakeShareable(new FJsonObject);
+			PinObj->SetStringField(TEXT("name"), Pin->PinName.ToString());
+			PinObj->SetStringField(TEXT("type"), Pin->PinType.PinCategory.ToString());
+			if (Pin->Direction == EGPD_Input)
+				InputPins.Add(MakeShareable(new FJsonValueObject(PinObj)));
+			else
+				OutputPins.Add(MakeShareable(new FJsonValueObject(PinObj)));
+		}
+	}
+	Response->SetArrayField(TEXT("input_pins"), InputPins);
+	Response->SetArrayField(TEXT("output_pins"), OutputPins);
+
 	return Response;
 }
 

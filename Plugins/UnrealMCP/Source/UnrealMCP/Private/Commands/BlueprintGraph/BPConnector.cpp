@@ -204,9 +204,18 @@ UK2Node* FBPConnector::FindNodeById(UEdGraph* Graph, const FString& NodeId)
 
 UEdGraphPin* FBPConnector::FindPinByName(UK2Node* Node, const FString& PinName, EEdGraphPinDirection Direction)
 {
+    // First pass: exact case-sensitive match
     for (UEdGraphPin* Pin : Node->Pins)
     {
         if (Pin->PinName.ToString() == PinName && Pin->Direction == Direction)
+        {
+            return Pin;
+        }
+    }
+    // Second pass: case-insensitive fallback
+    for (UEdGraphPin* Pin : Node->Pins)
+    {
+        if (Pin->PinName.ToString().Equals(PinName, ESearchCase::IgnoreCase) && Pin->Direction == Direction)
         {
             return Pin;
         }
