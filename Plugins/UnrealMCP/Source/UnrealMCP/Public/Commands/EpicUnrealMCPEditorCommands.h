@@ -28,4 +28,7 @@ private:
 
     // Input mapping modification
     TSharedPtr<FJsonObject> HandleModifyInputMapping(const TSharedPtr<FJsonObject>& Params);
+
+    // Blueprint CDO property setter (works for inherited variables too)
+    TSharedPtr<FJsonObject> HandleSetBlueprintProperty(const TSharedPtr<FJsonObject>& Params);
 }; 

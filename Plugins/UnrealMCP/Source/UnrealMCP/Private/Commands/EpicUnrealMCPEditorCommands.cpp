@@ -25,6 +25,11 @@
 #include "InputMappingContext.h"
 #include "InputAction.h"
 #include "FileHelpers.h"
+#include "Kismet2/KismetEditorUtilities.h"
+#include "Engine/SkyLight.h"
+#include "Components/SkyLightComponent.h"
+#include "Engine/SimpleConstructionScript.h"
+#include "Engine/SCS_Node.h"
 
 FEpicUnrealMCPEditorCommands::FEpicUnrealMCPEditorCommands()
 {
@@ -62,6 +67,11 @@ TSharedPtr<FJsonObject> FEpicUnrealMCPEditorCommands::HandleCommand(const FStrin
     else if (CommandType == TEXT("modify_input_mapping"))
     {
         return HandleModifyInputMapping(Params);
+    }
+    // Blueprint CDO property setter (inherited variables)
+    else if (CommandType == TEXT("set_blueprint_property"))
+    {
+        return HandleSetBlueprintProperty(Params);
     }
     
     return FEpicUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown editor command: %s"), *CommandType));
@@ -408,4 +418,117 @@ TSharedPtr<FJsonObject> FEpicUnrealMCPEditorCommands::HandleModifyInputMapping(c
     Result->SetStringField(TEXT("new_key"), NewKeyName);
     Result->SetStringField(TEXT("imc_path"), IMCPath);
     return Result;
+}
+
+TSharedPtr<FJsonObject> FEpicUnrealMCPEditorCommands::HandleSetBlueprintProperty(const TSharedPtr<FJsonObject>& Params)
+{
+    // Required: blueprint_path, property_name
+    // Value: float_value | bool_value | int_value | byte_value
+    FString BlueprintPath, PropertyName;
+    if (!Params->TryGetStringField(TEXT("blueprint_path"), BlueprintPath))
+        return FEpicUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing required param: blueprint_path"));
+    if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
+        return FEpicUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing required param: property_name"));
+
+    UBlueprint* BP = LoadObject<UBlueprint>(nullptr, *BlueprintPath);
+    if (!BP || !BP->GeneratedClass)
+        return FEpicUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Could not load Blueprint: %s"), *BlueprintPath));
+
+    // Get the CDO — this is the class default object that stores default property values
+    UObject* CDO = BP->GeneratedClass->GetDefaultObject(true);
+    if (!CDO)
+        return FEpicUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Could not get CDO for Blueprint"));
+
+    // Search the full class hierarchy for the property
+    FProperty* Prop = CDO->GetClass()->FindPropertyByName(FName(*PropertyName));
+    if (!Prop)
+        return FEpicUnrealMCPCommonUtils::CreateErrorResponse(
+            FString::Printf(TEXT("Property '%s' not found in class hierarchy of '%s'"), *PropertyName, *BlueprintPath));
+
+    FString SetResult;
+
+    // Handle byte (enum)
+    double ByteVal;
+    if (Params->HasField(TEXT("byte_value")))
+    {
+        ByteVal = Params->GetNumberField(TEXT("byte_value"));
+        if (FByteProperty* BProp = CastField<FByteProperty>(Prop))
+        {
+            BProp->SetPropertyValue_InContainer(CDO, (uint8)ByteVal);
+            SetResult = FString::Printf(TEXT("Set byte '%s' = %d"), *PropertyName, (int32)ByteVal);
+        }
+        else
+        {
+            return FEpicUnrealMCPCommonUtils::CreateErrorResponse(
+                FString::Printf(TEXT("Property '%s' is not a byte"), *PropertyName));
+        }
+    }
+    // Handle bool
+    else if (Params->HasField(TEXT("bool_value")))
+    {
+        bool BoolVal = Params->GetBoolField(TEXT("bool_value"));
+        if (FBoolProperty* BPropBool = CastField<FBoolProperty>(Prop))
+        {
+            BPropBool->SetPropertyValue_InContainer(CDO, BoolVal);
+            SetResult = FString::Printf(TEXT("Set bool '%s' = %s"), *PropertyName, BoolVal ? TEXT("true") : TEXT("false"));
+        }
+        else
+        {
+            return FEpicUnrealMCPCommonUtils::CreateErrorResponse(
+                FString::Printf(TEXT("Property '%s' is not a bool"), *PropertyName));
+        }
+    }
+    // Handle float
+    else if (Params->HasField(TEXT("float_value")))
+    {
+        double FloatVal = Params->GetNumberField(TEXT("float_value"));
+        if (FFloatProperty* FProp = CastField<FFloatProperty>(Prop))
+        {
+            FProp->SetPropertyValue_InContainer(CDO, (float)FloatVal);
+            SetResult = FString::Printf(TEXT("Set float '%s' = %f"), *PropertyName, FloatVal);
+        }
+        else if (FDoubleProperty* DProp = CastField<FDoubleProperty>(Prop))
+        {
+            DProp->SetPropertyValue_InContainer(CDO, FloatVal);
+            SetResult = FString::Printf(TEXT("Set double '%s' = %f"), *PropertyName, FloatVal);
+        }
+        else
+        {
+            return FEpicUnrealMCPCommonUtils::CreateErrorResponse(
+                FString::Printf(TEXT("Property '%s' is not a float"), *PropertyName));
+        }
+    }
+    // Handle int
+    else if (Params->HasField(TEXT("int_value")))
+    {
+        int32 IntVal = (int32)Params->GetNumberField(TEXT("int_value"));
+        if (FIntProperty* IProp = CastField<FIntProperty>(Prop))
+        {
+            IProp->SetPropertyValue_InContainer(CDO, IntVal);
+            SetResult = FString::Printf(TEXT("Set int '%s' = %d"), *PropertyName, IntVal);
+        }
+        else
+        {
+            return FEpicUnrealMCPCommonUtils::CreateErrorResponse(
+                FString::Printf(TEXT("Property '%s' is not an int"), *PropertyName));
+        }
+    }
+    else
+    {
+        return FEpicUnrealMCPCommonUtils::CreateErrorResponse(
+            TEXT("Must provide one of: byte_value, bool_value, float_value, int_value"));
+    }
+
+    // Mark blueprint dirty, recompile, and save
+    BP->MarkPackageDirty();
+    FKismetEditorUtilities::CompileBlueprint(BP);
+    TArray<UPackage*> PackagesToSaveProp;
+    PackagesToSaveProp.Add(BP->GetPackage());
+    UEditorLoadingAndSavingUtils::SavePackages(PackagesToSaveProp, false);
+
+    TSharedPtr<FJsonObject> PropResult = MakeShareable(new FJsonObject);
+    PropResult->SetStringField(TEXT("status"), TEXT("success"));
+    PropResult->SetStringField(TEXT("result"), SetResult);
+    PropResult->SetStringField(TEXT("blueprint"), BlueprintPath);
+    return PropResult;
 }
