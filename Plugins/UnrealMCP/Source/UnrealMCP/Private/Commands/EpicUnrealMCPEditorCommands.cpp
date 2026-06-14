@@ -25,14 +25,6 @@
 #include "InputMappingContext.h"
 #include "InputAction.h"
 #include "FileHelpers.h"
-#include "Engine/SkyLight.h"
-#include "Components/SkyLightComponent.h"
-#include "Engine/DirectionalLight.h"
-#include "Components/DirectionalLightComponent.h"
-#include "Components/PointLightComponent.h"
-#include "Engine/SimpleConstructionScript.h"
-#include "Engine/SCS_Node.h"
-#include "Kismet2/KismetEditorUtilities.h"
 
 FEpicUnrealMCPEditorCommands::FEpicUnrealMCPEditorCommands()
 {
@@ -70,11 +62,6 @@ TSharedPtr<FJsonObject> FEpicUnrealMCPEditorCommands::HandleCommand(const FStrin
     else if (CommandType == TEXT("modify_input_mapping"))
     {
         return HandleModifyInputMapping(Params);
-    }
-    // Component property setter (e.g. light intensity on BP_FPCharacter lights)
-    else if (CommandType == TEXT("set_component_property"))
-    {
-        return HandleSetComponentProperty(Params);
     }
     
     return FEpicUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown editor command: %s"), *CommandType));
@@ -220,18 +207,6 @@ TSharedPtr<FJsonObject> FEpicUnrealMCPEditorCommands::HandleSpawnActor(const TSh
     else if (ActorType == TEXT("CameraActor"))
     {
         NewActor = World->SpawnActor<ACameraActor>(ACameraActor::StaticClass(), Location, Rotation, SpawnParams);
-    }
-    else if (ActorType == TEXT("SkyLight"))
-    {
-        ASkyLight* SkyLightActor = World->SpawnActor<ASkyLight>(ASkyLight::StaticClass(), Location, Rotation, SpawnParams);
-        if (SkyLightActor && SkyLightActor->GetLightComponent())
-        {
-            // Default to a modest intensity suitable for AR character lighting
-            double Intensity = 1.0;
-            Params->TryGetNumberField(TEXT("intensity"), Intensity);
-            SkyLightActor->GetLightComponent()->Intensity = (float)Intensity;
-        }
-        NewActor = SkyLightActor;
     }
     else
     {
@@ -433,120 +408,4 @@ TSharedPtr<FJsonObject> FEpicUnrealMCPEditorCommands::HandleModifyInputMapping(c
     Result->SetStringField(TEXT("new_key"), NewKeyName);
     Result->SetStringField(TEXT("imc_path"), IMCPath);
     return Result;
-}
-
-TSharedPtr<FJsonObject> FEpicUnrealMCPEditorCommands::HandleSetComponentProperty(const TSharedPtr<FJsonObject>& Params)
-{
-    // Required params: blueprint_path, component_name, property_name
-    // Value params (at least one required): float_value, bool_value, int_value, string_value
-    FString BlueprintPath, ComponentName, PropertyName;
-    if (!Params->TryGetStringField(TEXT("blueprint_path"), BlueprintPath))
-        return FEpicUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing required param: blueprint_path"));
-    if (!Params->TryGetStringField(TEXT("component_name"), ComponentName))
-        return FEpicUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing required param: component_name"));
-    if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
-        return FEpicUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing required param: property_name"));
-
-    UBlueprint* BP = LoadObject<UBlueprint>(nullptr, *BlueprintPath);
-    if (!BP)
-        return FEpicUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Could not load Blueprint: %s"), *BlueprintPath));
-
-    if (!BP->SimpleConstructionScript)
-        return FEpicUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Blueprint has no SimpleConstructionScript"));
-
-    // Find the SCS node for the component
-    UActorComponent* ComponentTemplate = nullptr;
-    TArray<USCS_Node*> AllNodes = BP->SimpleConstructionScript->GetAllNodes();
-    for (USCS_Node* Node : AllNodes)
-    {
-        if (Node && Node->GetVariableName().ToString() == ComponentName)
-        {
-            ComponentTemplate = Node->ComponentTemplate;
-            break;
-        }
-    }
-
-    if (!ComponentTemplate)
-        return FEpicUnrealMCPCommonUtils::CreateErrorResponse(
-            FString::Printf(TEXT("Component '%s' not found in Blueprint '%s'"), *ComponentName, *BlueprintPath));
-
-    // Find the property by name
-    FProperty* Prop = ComponentTemplate->GetClass()->FindPropertyByName(FName(*PropertyName));
-    if (!Prop)
-        return FEpicUnrealMCPCommonUtils::CreateErrorResponse(
-            FString::Printf(TEXT("Property '%s' not found on component '%s'"), *PropertyName, *ComponentName));
-
-    FString SetResult;
-
-    // Handle float
-    double FloatVal;
-    if (Params->TryGetNumberField(TEXT("float_value"), FloatVal))
-    {
-        if (FFloatProperty* FProp = CastField<FFloatProperty>(Prop))
-        {
-            FProp->SetPropertyValue_InContainer(ComponentTemplate, (float)FloatVal);
-            SetResult = FString::Printf(TEXT("Set float '%s' = %f"), *PropertyName, FloatVal);
-        }
-        else if (FDoubleProperty* DProp = CastField<FDoubleProperty>(Prop))
-        {
-            DProp->SetPropertyValue_InContainer(ComponentTemplate, FloatVal);
-            SetResult = FString::Printf(TEXT("Set double '%s' = %f"), *PropertyName, FloatVal);
-        }
-        else
-        {
-            return FEpicUnrealMCPCommonUtils::CreateErrorResponse(
-                FString::Printf(TEXT("Property '%s' is not a float/double"), *PropertyName));
-        }
-    }
-    // Handle bool
-    else if (Params->HasField(TEXT("bool_value")))
-    {
-        bool BoolVal = Params->GetBoolField(TEXT("bool_value"));
-        if (FBoolProperty* BProp = CastField<FBoolProperty>(Prop))
-        {
-            BProp->SetPropertyValue_InContainer(ComponentTemplate, BoolVal);
-            SetResult = FString::Printf(TEXT("Set bool '%s' = %s"), *PropertyName, BoolVal ? TEXT("true") : TEXT("false"));
-        }
-        else
-        {
-            return FEpicUnrealMCPCommonUtils::CreateErrorResponse(
-                FString::Printf(TEXT("Property '%s' is not a bool"), *PropertyName));
-        }
-    }
-    // Handle int
-    else if (Params->HasField(TEXT("int_value")))
-    {
-        int64 IntVal = (int64)Params->GetNumberField(TEXT("int_value"));
-        if (FIntProperty* IProp = CastField<FIntProperty>(Prop))
-        {
-            IProp->SetPropertyValue_InContainer(ComponentTemplate, (int32)IntVal);
-            SetResult = FString::Printf(TEXT("Set int '%s' = %lld"), *PropertyName, IntVal);
-        }
-        else
-        {
-            return FEpicUnrealMCPCommonUtils::CreateErrorResponse(
-                FString::Printf(TEXT("Property '%s' is not an int"), *PropertyName));
-        }
-    }
-    else
-    {
-        return FEpicUnrealMCPCommonUtils::CreateErrorResponse(
-            TEXT("Must provide one of: float_value, bool_value, int_value"));
-    }
-
-    // Mark blueprint dirty and compile
-    BP->MarkPackageDirty();
-    FKismetEditorUtilities::CompileBlueprint(BP);
-
-    // Save the blueprint package
-    TArray<UPackage*> PackagesToSave;
-    PackagesToSave.Add(BP->GetPackage());
-    UEditorLoadingAndSavingUtils::SavePackages(PackagesToSave, false);
-
-    TSharedPtr<FJsonObject> Res = MakeShareable(new FJsonObject);
-    Res->SetStringField(TEXT("status"), TEXT("success"));
-    Res->SetStringField(TEXT("result"), SetResult);
-    Res->SetStringField(TEXT("blueprint"), BlueprintPath);
-    Res->SetStringField(TEXT("component"), ComponentName);
-    return Res;
 }
