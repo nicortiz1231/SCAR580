@@ -28,4 +28,7 @@ private:
 
     // Input mapping modification
     TSharedPtr<FJsonObject> HandleModifyInputMapping(const TSharedPtr<FJsonObject>& Params);
+
+    // Component property setter
+    TSharedPtr<FJsonObject> HandleSetComponentProperty(const TSharedPtr<FJsonObject>& Params);
 }; 
