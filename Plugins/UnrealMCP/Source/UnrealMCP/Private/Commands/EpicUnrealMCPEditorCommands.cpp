@@ -22,6 +22,9 @@
 #include "Engine/BlueprintGeneratedClass.h"
 #include "EditorAssetLibrary.h"
 #include "Commands/EpicUnrealMCPBlueprintCommands.h"
+#include "InputMappingContext.h"
+#include "InputAction.h"
+#include "FileHelpers.h"
 
 FEpicUnrealMCPEditorCommands::FEpicUnrealMCPEditorCommands()
 {
@@ -54,6 +57,11 @@ TSharedPtr<FJsonObject> FEpicUnrealMCPEditorCommands::HandleCommand(const FStrin
     else if (CommandType == TEXT("spawn_blueprint_actor"))
     {
         return HandleSpawnBlueprintActor(Params);
+    }
+    // Input mapping modification
+    else if (CommandType == TEXT("modify_input_mapping"))
+    {
+        return HandleModifyInputMapping(Params);
     }
     
     return FEpicUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown editor command: %s"), *CommandType));
@@ -305,4 +313,99 @@ TSharedPtr<FJsonObject> FEpicUnrealMCPEditorCommands::HandleSpawnBlueprintActor(
     // This function will now correctly call the implementation in BlueprintCommands
     FEpicUnrealMCPBlueprintCommands BlueprintCommands;
     return BlueprintCommands.HandleCommand(TEXT("spawn_blueprint_actor"), Params);
+}
+
+TSharedPtr<FJsonObject> FEpicUnrealMCPEditorCommands::HandleModifyInputMapping(const TSharedPtr<FJsonObject>& Params)
+{
+    // Required params: imc_path, action_path, new_key
+    // Optional: old_key (to match a specific binding; if omitted, replaces first match)
+    FString IMCPath, ActionPath, NewKeyName;
+    if (!Params->TryGetStringField(TEXT("imc_path"), IMCPath))
+        return FEpicUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing required param: imc_path"));
+    if (!Params->TryGetStringField(TEXT("action_path"), ActionPath))
+        return FEpicUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing required param: action_path"));
+    if (!Params->TryGetStringField(TEXT("new_key"), NewKeyName))
+        return FEpicUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Missing required param: new_key"));
+
+    FString OldKeyName;
+    bool bFilterByOldKey = Params->TryGetStringField(TEXT("old_key"), OldKeyName);
+
+    // Load the Input Mapping Context asset
+    UInputMappingContext* IMC = LoadObject<UInputMappingContext>(nullptr, *IMCPath);
+    if (!IMC)
+        return FEpicUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Could not load IMC asset: %s"), *IMCPath));
+
+    // Load the Input Action asset
+    UInputAction* Action = LoadObject<UInputAction>(nullptr, *ActionPath);
+    if (!Action)
+        return FEpicUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Could not load InputAction asset: %s"), *ActionPath));
+
+    FName NewKeyFName(*NewKeyName);
+    FKey NewKey = FKey(NewKeyFName);
+    if (!NewKey.IsValid())
+        return FEpicUnrealMCPCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Invalid key name: %s"), *NewKeyName));
+
+    // Access Mappings via reflection to avoid const limitations
+    FArrayProperty* MappingsProp = CastField<FArrayProperty>(
+        UInputMappingContext::StaticClass()->FindPropertyByName(TEXT("Mappings")));
+    if (!MappingsProp)
+        return FEpicUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Could not find Mappings property on UInputMappingContext"));
+
+    FStructProperty* ElemProp = CastField<FStructProperty>(MappingsProp->Inner);
+    if (!ElemProp)
+        return FEpicUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Unexpected Mappings inner property type"));
+
+    FObjectProperty* ActionProp = CastField<FObjectProperty>(
+        ElemProp->Struct->FindPropertyByName(TEXT("Action")));
+    FStructProperty* KeyProp = CastField<FStructProperty>(
+        ElemProp->Struct->FindPropertyByName(TEXT("Key")));
+
+    if (!ActionProp || !KeyProp)
+        return FEpicUnrealMCPCommonUtils::CreateErrorResponse(TEXT("Could not find Action or Key property on FEnhancedActionKeyMapping"));
+
+    FScriptArrayHelper ArrayHelper(MappingsProp, MappingsProp->ContainerPtrToValuePtr<void>(IMC));
+
+    int32 ChangedCount = 0;
+    for (int32 i = 0; i < ArrayHelper.Num(); i++)
+    {
+        void* ElemPtr = ArrayHelper.GetRawPtr(i);
+
+        // Check action match
+        UObject* MappedAction = ActionProp->GetObjectPropertyValue_InContainer(ElemPtr);
+        if (MappedAction != Action)
+            continue;
+
+        // Optionally filter by old key
+        if (bFilterByOldKey)
+        {
+            FKey* KeyPtr = KeyProp->ContainerPtrToValuePtr<FKey>(ElemPtr);
+            if (KeyPtr->GetFName() != FName(*OldKeyName))
+                continue;
+        }
+
+        // Modify key in-place
+        FKey* KeyPtr = KeyProp->ContainerPtrToValuePtr<FKey>(ElemPtr);
+        *KeyPtr = NewKey;
+        ChangedCount++;
+    }
+
+    if (ChangedCount == 0)
+        return FEpicUnrealMCPCommonUtils::CreateErrorResponse(
+            FString::Printf(TEXT("No mapping found for action '%s'%s in IMC '%s'"),
+                *ActionPath,
+                bFilterByOldKey ? *FString::Printf(TEXT(" with key '%s'"), *OldKeyName) : TEXT(""),
+                *IMCPath));
+
+    // Mark package dirty and save
+    IMC->MarkPackageDirty();
+    TArray<UPackage*> PackagesToSave;
+    PackagesToSave.Add(IMC->GetPackage());
+    UEditorLoadingAndSavingUtils::SavePackages(PackagesToSave, /*bOnlyDirty=*/false);
+
+    TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
+    Result->SetStringField(TEXT("status"), TEXT("success"));
+    Result->SetNumberField(TEXT("mappings_changed"), (double)ChangedCount);
+    Result->SetStringField(TEXT("new_key"), NewKeyName);
+    Result->SetStringField(TEXT("imc_path"), IMCPath);
+    return Result;
 }

@@ -25,4 +25,7 @@ private:
 
     // Blueprint actor spawning
     TSharedPtr<FJsonObject> HandleSpawnBlueprintActor(const TSharedPtr<FJsonObject>& Params);
+
+    // Input mapping modification
+    TSharedPtr<FJsonObject> HandleModifyInputMapping(const TSharedPtr<FJsonObject>& Params);
 }; 
