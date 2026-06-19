@@ -20,3 +20,7 @@ Content/BodycamFPSKIT/Demo/
 
 # Crash reports
 CrashReportClient/
+
+# Local build output and script logs
+Build/
+Scripts/*.log
