@@ -2,8 +2,18 @@
 	"FileVersion": 3,
 	"EngineAssociation": "5.8",
 	"Category": "",
-	"Description": "",
+	"Description": "SCAR-580 AR FPS iOS game",
+	"TargetPlatforms": [
+		"IOS"
+	],
 	"Plugins": [
+		{
+			"Name": "AppleARKit",
+			"Enabled": true,
+			"SupportedTargetPlatforms": [
+				"IOS"
+			]
+		},
 		{
 			"Name": "ProceduralFPSAnimation",
 			"Enabled": false,
@@ -40,7 +50,7 @@
 		},
 		{
 			"Name": "UnrealMCP",
-			"Enabled": false
+			"Enabled": true
 		}
 	]
 }
