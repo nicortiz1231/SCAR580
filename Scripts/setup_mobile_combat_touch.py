@@ -9,11 +9,19 @@ LOG_PATH = Path("/Users/nickortiz/Documents/Unreal Projects/SCAR-580/Scripts/set
 MARKER = "Mobile Combat TouchInterface"
 IA_SHOOT_NODE = "K2Node_EnhancedInputAction_24"
 SHOOT_BRANCH = "K2Node_IfThenElse_50"
+RECOIL_NODE = "K2Node_CallFunction_153"
 
 TOUCH_MARKERS = (
     "Mobile Touch Zones v",
     "Mobile Suppress LMB Shoot",
     "Mobile Combat TouchInterface",
+    "Mobile Left FreeAim Drag",
+    "Mobile Left Zone FreeAim",
+    "Mobile Left ADS Hold",
+    "Mobile Joystick FreeAim",
+    "Mobile Joystick ADS Hold",
+    "Mobile ADS FreeAim",
+    "Mobile Touch Prev Exec",
 )
 
 
@@ -40,13 +48,17 @@ def connect_data(src, dst) -> None:
         raise RuntimeError("Data connection failed")
 
 
+def comment_text(node) -> str:
+    try:
+        return str(node.get_editor_property("node_comment"))
+    except Exception:
+        return ""
+
+
 def is_marker_comment(node) -> bool:
     if node.get_class().get_name() != "K2Node_Comment":
         return False
-    try:
-        text = str(node.get_editor_property("node_comment"))
-    except Exception:
-        return False
+    text = comment_text(node)
     return any(m in text for m in TOUCH_MARKERS)
 
 
@@ -55,6 +67,43 @@ def find_node(editor, name: str):
         if node.get_name() == name:
             return node
     return None
+
+
+def ensure_tick_recoil(editor) -> None:
+    tick = editor.find_event_node("ReceiveTick")
+    recoil = find_node(editor, RECOIL_NODE)
+    if not tick or not recoil:
+        log("WARN: Missing ReceiveTick or Recoil — skip tick restore")
+        return
+
+    recoil_exec = recoil.find_execute_pin()
+    for linked in unreal.BlueprintGraphPinLibrary.list_connected_pins(recoil_exec):
+        owner = unreal.BlueprintGraphPinLibrary.get_owning_node(linked)
+        if owner and owner.get_name() == tick.get_name():
+            log("ReceiveTick -> Recoil already wired")
+            return
+
+    tick_then = tick.find_then_pin()
+    existing = list(unreal.BlueprintGraphPinLibrary.list_connected_pins(tick_then))
+    if existing:
+        tick_pos = tick.get_node_pos()
+        seq = editor.create_node_from_name(
+            "Utilities|FlowControl|Sequence",
+            unreal.Vector2D(tick_pos.x + 200, tick_pos.y),
+            [],
+        )
+        if not seq:
+            raise RuntimeError("Could not create Sequence for ReceiveTick")
+        unreal.BlueprintGraphPinLibrary.break_pin_links(tick_then)
+        connect_exec(tick_then, seq.find_execute_pin())
+        connect_exec(seq.find_output_pin("then_0"), recoil_exec)
+        connect_exec(seq.find_output_pin("then_1"), existing[0])
+        log("Inserted Sequence: ReceiveTick -> Recoil + existing tick branch")
+        return
+
+    unreal.BlueprintGraphPinLibrary.break_pin_links(tick_then)
+    connect_exec(tick_then, recoil_exec)
+    log("Restored ReceiveTick -> Recoil")
 
 
 def cleanup_tick_touch(editor) -> None:
@@ -251,6 +300,7 @@ def main() -> None:
     eg = unreal.BlueprintEditorLibrary.find_event_graph(bp)
     editor = unreal.BlueprintGraphEditor.get_graph_editor(eg)
     cleanup_tick_touch(editor)
+    ensure_tick_recoil(editor)
     cleanup_suppress_near_ia_shoot(editor)
     restore_ia_shoot(editor)
     wire_activate_touch_interface(editor)
