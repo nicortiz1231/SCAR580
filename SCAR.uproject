@@ -3,6 +3,13 @@
 	"EngineAssociation": "5.8",
 	"Category": "",
 	"Description": "SCAR-580 AR FPS iOS game",
+	"Modules": [
+		{
+			"Name": "SCAR",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	],
 	"TargetPlatforms": [
 		"IOS"
 	],
@@ -13,6 +20,10 @@
 			"SupportedTargetPlatforms": [
 				"IOS"
 			]
+		},
+		{
+			"Name": "LiveLink",
+			"Enabled": true
 		},
 		{
 			"Name": "ProceduralFPSAnimation",
