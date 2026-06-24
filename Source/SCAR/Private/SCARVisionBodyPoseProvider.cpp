@@ -146,6 +146,8 @@ bool USCARVisionBodyPoseProvider::TryAcquireCameraRgba(UWorld* World, TArray<uin
 void USCARVisionBodyPoseProvider::BuildTargetsFromNative(const int32 BodyCount, const double NowSeconds)
 {
 	Targets.Reset();
+	TArray<bool> PreviousUsed;
+	PreviousUsed.SetNumZeroed(PreviousTargets.Num());
 
 	for (int32 BodyIndex = 0; BodyIndex < BodyCount; ++BodyIndex)
 	{
@@ -163,10 +165,17 @@ void USCARVisionBodyPoseProvider::BuildTargetsFromNative(const int32 BodyCount, 
 			NativeOutput[Offset + 3],
 			NativeOutput[Offset + 4]);
 
+		if (bMirrorViewportX)
+		{
+			const float MirroredMinX = 1.f - Target.Bounds.Z;
+			Target.Bounds.Z = 1.f - Target.Bounds.X;
+			Target.Bounds.X = MirroredMinX;
+		}
+
 		const FVector2D BoundsCenter(
 			(Target.Bounds.X + Target.Bounds.Z) * 0.5f,
 			(Target.Bounds.Y + Target.Bounds.W) * 0.5f);
-		Target.LocalId = AssociateOrCreateLocalId(BoundsCenter);
+		Target.LocalId = AssociateOrCreateLocalId(BoundsCenter, PreviousUsed);
 		Target.LastSeenTimeSeconds = NowSeconds;
 
 		for (int32 JointIndex = 0; JointIndex < FSCARVisionBodyPoseBridge::JointCount; ++JointIndex)
@@ -177,9 +186,14 @@ void USCARVisionBodyPoseProvider::BuildTargetsFromNative(const int32 BodyCount, 
 				continue;
 			}
 
-			const float X = NativeOutput[JointOffset];
-			const float Y = NativeOutput[JointOffset + 1];
+			float X = NativeOutput[JointOffset];
+			float Y = NativeOutput[JointOffset + 1];
 			const float Confidence = NativeOutput[JointOffset + 2];
+
+			if (bMirrorViewportX && X >= 0.f)
+			{
+				X = 1.f - X;
+			}
 
 			FSCARVisionBodyJoint& Joint = Target.Joints[JointIndex];
 			Joint.Confidence = Confidence;
@@ -195,27 +209,36 @@ void USCARVisionBodyPoseProvider::BuildTargetsFromNative(const int32 BodyCount, 
 	}
 }
 
-int32 USCARVisionBodyPoseProvider::AssociateOrCreateLocalId(const FVector2D& BoundsCenter)
+int32 USCARVisionBodyPoseProvider::AssociateOrCreateLocalId(
+	const FVector2D& BoundsCenter,
+	TArray<bool>& PreviousUsed)
 {
-	int32 BestId = INDEX_NONE;
+	int32 BestIndex = INDEX_NONE;
 	float BestDistanceSq = MaxAssociationDistance * MaxAssociationDistance;
 
-	for (const FSCARScreenSpaceBodyTarget& Previous : PreviousTargets)
+	for (int32 Index = 0; Index < PreviousTargets.Num(); ++Index)
 	{
+		if (PreviousUsed.IsValidIndex(Index) && PreviousUsed[Index])
+		{
+			continue;
+		}
+
+		const FSCARScreenSpaceBodyTarget& Previous = PreviousTargets[Index];
 		const FVector2D PreviousCenter(
 			(Previous.Bounds.X + Previous.Bounds.Z) * 0.5f,
 			(Previous.Bounds.Y + Previous.Bounds.W) * 0.5f);
 		const float DistanceSq = FVector2D::DistSquared(BoundsCenter, PreviousCenter);
-		if (DistanceSq <= BestDistanceSq)
+		if (DistanceSq < BestDistanceSq)
 		{
 			BestDistanceSq = DistanceSq;
-			BestId = Previous.LocalId;
+			BestIndex = Index;
 		}
 	}
 
-	if (BestId != INDEX_NONE)
+	if (BestIndex != INDEX_NONE)
 	{
-		return BestId;
+		PreviousUsed[BestIndex] = true;
+		return PreviousTargets[BestIndex].LocalId;
 	}
 
 	return NextLocalId++;

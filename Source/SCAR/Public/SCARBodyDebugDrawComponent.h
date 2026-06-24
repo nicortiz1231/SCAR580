@@ -10,10 +10,10 @@ class APlayerController;
 UENUM(BlueprintType)
 enum class ESCARBodyDebugSourceMode : uint8
 {
-	Auto UMETA(ToolTip = "Prefer ARKit Pose2D screen overlay, then 3D projected to screen, then Vision."),
+	Auto UMETA(ToolTip = "ARKit Pose2D for the primary tracked body plus all Vision multi-body skeletons."),
 	ARKit3D UMETA(ToolTip = "Draw only ARKit 3D body skeleton."),
 	Pose2D UMETA(ToolTip = "Draw only ARKit Pose2D skeleton."),
-	Vision UMETA(ToolTip = "Draw only Apple Vision skeleton."),
+	Vision UMETA(ToolTip = "Draw all Apple Vision multi-body skeletons."),
 	All UMETA(ToolTip = "Draw all available skeleton sources.")
 };
 
@@ -27,6 +27,24 @@ struct FSCARBodyDebugScreenJoint
 
 	UPROPERTY()
 	bool bIsValid = false;
+};
+
+USTRUCT()
+struct FSCARBodyDebugScreenSkeleton
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TArray<FSCARBodyDebugScreenJoint> Joints;
+
+	UPROPERTY()
+	TArray<FIntPoint> BonePairs;
+
+	UPROPERTY()
+	FLinearColor BoneColor = FLinearColor::Green;
+
+	UPROPERTY()
+	FLinearColor JointColor = FLinearColor::Yellow;
 };
 
 UCLASS(ClassGroup = (SCAR), meta = (BlueprintSpawnableComponent))
@@ -93,30 +111,26 @@ private:
 	FDelegateHandle DebugDrawDelegateHandle;
 
 	UPROPERTY(Transient)
-	TArray<FSCARBodyDebugScreenJoint> CachedScreenJoints;
-
-	UPROPERTY(Transient)
-	TArray<FIntPoint> CachedBonePairs;
-
-	UPROPERTY(Transient)
-	FLinearColor CachedBoneColor = FLinearColor::Green;
-
-	UPROPERTY(Transient)
-	FLinearColor CachedJointColor = FLinearColor::Yellow;
+	TArray<FSCARBodyDebugScreenSkeleton> CachedScreenSkeletons;
 
 	UPROPERTY(Transient)
 	bool bHasScreenOverlay = false;
 
 	void OnDebugDraw(UCanvas* Canvas, APlayerController* PlayerController);
+	void ClearScreenOverlayCache();
 	void UpdateScreenOverlayCache(const class USCARBodyDetectionSubsystem* Subsystem);
-	void CachePose2DScreenOverlay(const class USCARBodyDetectionSubsystem* Subsystem);
-	void CacheVisionScreenOverlay(const class USCARBodyDetectionSubsystem* Subsystem);
-	void CachePose3DProjectedScreenOverlay(const class USCARBodyDetectionSubsystem* Subsystem);
+	void AppendPose2DScreenSkeleton(const class USCARBodyDetectionSubsystem* Subsystem);
+	void AppendAllVisionScreenSkeletons(const class USCARBodyDetectionSubsystem* Subsystem);
+	void AppendPose3DProjectedScreenSkeleton(const class USCARBodyDetectionSubsystem* Subsystem);
+	bool BuildVisionScreenSkeleton(
+		const struct FSCARScreenSpaceBodyTarget& Target,
+		int32 ScreenWidth,
+		int32 ScreenHeight,
+		FSCARBodyDebugScreenSkeleton& OutSkeleton) const;
 	void DrawScreenOverlay(UCanvas* Canvas) const;
 	void DrawGuiLine(UCanvas* Canvas, const FVector2D& Start, const FVector2D& End, float Thickness, const FLinearColor& Color) const;
 	void DrawGuiJoint(UCanvas* Canvas, const FVector2D& Center, float Size, const FLinearColor& Color) const;
 
 	void DrawPose3D(const class USCARBodyDetectionSubsystem* Subsystem) const;
-	int32 FindPrimaryVisionTargetIndex(const TArray<struct FSCARScreenSpaceBodyTarget>& Targets) const;
 	bool VisionJointToGuiPixels(const struct FSCARVisionBodyJoint& Joint, int32 ScreenWidth, int32 ScreenHeight, FVector2D& OutGuiPixels) const;
 };

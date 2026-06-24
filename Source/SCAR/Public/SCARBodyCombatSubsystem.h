@@ -66,7 +66,7 @@ public:
 
 	/** Minimum time between hit-confirm sounds to avoid iOS audio voice buildup. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Feedback", meta = (ClampMin = "0.0"))
-	float MinHitSoundIntervalSeconds = 0.05f;
+	float MinHitSoundIntervalSeconds = 0.1f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Feedback")
 	bool bSpawnBloodEffect = true;
@@ -143,6 +143,10 @@ private:
 	void EnsureFeedbackAssets();
 	ASCARBodyHitFeedbackActor* EnsureBloodFeedbackActor();
 	void InvalidateHudCache();
+	void EnsureCanvasOverlayDrawRegistered();
+	void UnregisterCanvasOverlayDraw();
+	void OnCanvasOverlayDraw(UCanvas* Canvas, APlayerController* PlayerController);
+	void SyncCanvasOverlayDrawRegistration();
 
 	UPROPERTY()
 	TObjectPtr<UTexture2D> HitMarkerTexture;
@@ -160,7 +164,11 @@ private:
 	mutable TWeakObjectPtr<UImage> CachedHudHitMarkerImage;
 	mutable TWeakObjectPtr<const APawn> CachedHudPawn;
 	double LastHitSoundPlaySeconds = -1.0;
+	double LastHudBlinkPlaySeconds = -1.0;
 	bool bUseCanvasHitMarkerFallback = false;
+	FDelegateHandle CanvasOverlayDrawHandle;
+	FVector2D LastAppliedMarkerViewport01 = FVector2D(-1.f, -1.f);
+	float LastAppliedMarkerSizePx = -1.f;
 
 	bool bSkeletonHitMarkerVisible = false;
 	float SkeletonHitMarkerHideRemaining = 0.f;

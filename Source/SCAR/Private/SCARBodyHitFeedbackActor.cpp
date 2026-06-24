@@ -45,17 +45,30 @@ void ASCARBodyHitFeedbackActor::SpawnBloodEffect()
 
 	if (BloodEffect)
 	{
+		if (BloodEffect->GetAsset() != BloodNiagaraSystem)
+		{
+			BloodEffect->SetAsset(BloodNiagaraSystem);
+		}
+
+		BloodEffect->DeactivateImmediate();
+		BloodEffect->ResetSystem();
 		BloodEffect->SetVisibility(true);
-		BloodEffect->SetAsset(BloodNiagaraSystem);
 		BloodEffect->Activate(true);
+		return;
 	}
-	else
+
+	UNiagaraComponent* SpawnedEffect = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+		this,
+		BloodNiagaraSystem,
+		GetActorLocation(),
+		GetActorRotation(),
+		FVector::OneVector,
+		true,
+		true,
+		ENCPoolMethod::AutoRelease);
+	if (!SpawnedEffect)
 	{
-		UNiagaraFunctionLibrary::SpawnSystemAtLocation(
-			this,
-			BloodNiagaraSystem,
-			GetActorLocation(),
-			GetActorRotation());
+		return;
 	}
 
 	if (UWorld* World = GetWorld())
@@ -63,12 +76,11 @@ void ASCARBodyHitFeedbackActor::SpawnBloodEffect()
 		World->GetTimerManager().ClearTimer(BloodDestroyTimerHandle);
 		World->GetTimerManager().SetTimer(
 			BloodDestroyTimerHandle,
-			[this]()
+			[SpawnedEffect]()
 			{
-				if (BloodEffect)
+				if (IsValid(SpawnedEffect))
 				{
-					BloodEffect->Deactivate();
-					BloodEffect->SetVisibility(false);
+					SpawnedEffect->DeactivateImmediate();
 				}
 			},
 			BloodLifetimeSeconds,

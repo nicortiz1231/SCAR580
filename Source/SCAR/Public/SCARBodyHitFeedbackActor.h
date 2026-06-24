@@ -31,7 +31,7 @@ protected:
 	TObjectPtr<UNiagaraSystem> BloodNiagaraSystem;
 
 	UPROPERTY(EditDefaultsOnly, Category = "SCAR|Body Combat")
-	float BloodLifetimeSeconds = 0.8f;
+	float BloodLifetimeSeconds = 0.45f;
 
 private:
 	FTimerHandle BloodDestroyTimerHandle;

@@ -40,9 +40,5 @@ private:
 	UFUNCTION()
 	void HandleSubsystemBodyHit(const FSCARBodyCombatHitResult& HitResult);
 
-	void OnHitMarkerOverlayDraw(UCanvas* Canvas, APlayerController* PlayerController);
-
 	bool ShouldTryARBodyShot(const FHitResult& PhysicsHit, bool bPhysicsBlockingHit) const;
-
-	FDelegateHandle HitMarkerOverlayDrawHandle;
 };

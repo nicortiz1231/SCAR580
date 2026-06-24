@@ -1,9 +1,6 @@
 #include "SCARBodyCombatComponent.h"
 
-#include "Debug/DebugDrawService.h"
-#include "Engine/Canvas.h"
 #include "Engine/World.h"
-#include "GameFramework/PlayerController.h"
 #include "SCARBodyCombatSubsystem.h"
 
 USCARBodyCombatComponent::USCARBodyCombatComponent()
@@ -22,46 +19,11 @@ void USCARBodyCombatComponent::BeginPlay()
 			CombatSubsystem->OnBodyHit.AddDynamic(this, &USCARBodyCombatComponent::HandleSubsystemBodyHit);
 		}
 	}
-
-	if (!HitMarkerOverlayDrawHandle.IsValid())
-	{
-		FDebugDrawDelegate DebugDrawDelegate;
-		DebugDrawDelegate.BindUObject(this, &USCARBodyCombatComponent::OnHitMarkerOverlayDraw);
-		HitMarkerOverlayDrawHandle = UDebugDrawService::Register(TEXT("Game"), DebugDrawDelegate);
-	}
 }
 
 void USCARBodyCombatComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	if (HitMarkerOverlayDrawHandle.IsValid())
-	{
-		UDebugDrawService::Unregister(HitMarkerOverlayDrawHandle);
-		HitMarkerOverlayDrawHandle.Reset();
-	}
-
 	Super::EndPlay(EndPlayReason);
-}
-
-void USCARBodyCombatComponent::OnHitMarkerOverlayDraw(UCanvas* Canvas, APlayerController* PlayerController)
-{
-	if (!Canvas || !PlayerController)
-	{
-		return;
-	}
-
-	UWorld* World = GetWorld();
-	if (!World)
-	{
-		return;
-	}
-
-	USCARBodyCombatSubsystem* CombatSubsystem = World->GetSubsystem<USCARBodyCombatSubsystem>();
-	if (!CombatSubsystem)
-	{
-		return;
-	}
-
-	CombatSubsystem->DrawSkeletonHitMarkerOverlay(Canvas, PlayerController);
 }
 
 void USCARBodyCombatComponent::HandleSubsystemBodyHit(const FSCARBodyCombatHitResult& HitResult)

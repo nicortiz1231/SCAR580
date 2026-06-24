@@ -61,6 +61,6 @@ private:
 
 	bool TryAcquireCameraRgba(UWorld* World, TArray<uint8>& OutRgba, int32& OutWidth, int32& OutHeight) const;
 	void BuildTargetsFromNative(int32 BodyCount, double NowSeconds);
-	int32 AssociateOrCreateLocalId(const FVector2D& BoundsCenter);
+	int32 AssociateOrCreateLocalId(const FVector2D& BoundsCenter, TArray<bool>& PreviousUsed);
 	FVector2D ToViewportPosition(const FVector2D& VisionNormalized) const;
 };

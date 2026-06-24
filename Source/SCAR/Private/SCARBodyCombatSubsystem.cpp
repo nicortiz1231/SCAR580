@@ -308,6 +308,12 @@ FSCARBodyCombatHitResult USCARBodyCombatSubsystem::TryApplyShotAtViewport(
 		return Result;
 	}
 
+	const FSCARBodyDetectionSnapshot& Snapshot = DetectionSubsystem->GetSnapshot();
+	if (Snapshot.VisionTargets.Num() == 0 && !Snapshot.bHasPose2D)
+	{
+		return Result;
+	}
+
 	TArray<SCARScreenSpaceBodyTargeting::FSCARScreenSpaceAimSample> Samples;
 	if (!BuildAimSamples(DetectionSubsystem, PlayerController, Samples))
 	{
@@ -473,6 +479,49 @@ void USCARBodyCombatSubsystem::InvalidateHudCache()
 	CachedHudHitMarkerImage.Reset();
 	CachedHudPawn.Reset();
 	bUseCanvasHitMarkerFallback = false;
+	LastAppliedMarkerViewport01 = FVector2D(-1.f, -1.f);
+	LastAppliedMarkerSizePx = -1.f;
+	UnregisterCanvasOverlayDraw();
+}
+
+void USCARBodyCombatSubsystem::EnsureCanvasOverlayDrawRegistered()
+{
+	if (CanvasOverlayDrawHandle.IsValid())
+	{
+		return;
+	}
+
+	FDebugDrawDelegate DebugDrawDelegate;
+	DebugDrawDelegate.BindUObject(this, &USCARBodyCombatSubsystem::OnCanvasOverlayDraw);
+	CanvasOverlayDrawHandle = UDebugDrawService::Register(TEXT("Game"), DebugDrawDelegate);
+}
+
+void USCARBodyCombatSubsystem::UnregisterCanvasOverlayDraw()
+{
+	if (!CanvasOverlayDrawHandle.IsValid())
+	{
+		return;
+	}
+
+	UDebugDrawService::Unregister(CanvasOverlayDrawHandle);
+	CanvasOverlayDrawHandle.Reset();
+}
+
+void USCARBodyCombatSubsystem::OnCanvasOverlayDraw(UCanvas* Canvas, APlayerController* PlayerController)
+{
+	DrawSkeletonHitMarkerOverlay(Canvas, PlayerController);
+}
+
+void USCARBodyCombatSubsystem::SyncCanvasOverlayDrawRegistration()
+{
+	if (bSkeletonHitMarkerVisible && bUseCanvasHitMarkerFallback)
+	{
+		EnsureCanvasOverlayDrawRegistered();
+	}
+	else
+	{
+		UnregisterCanvasOverlayDraw();
+	}
 }
 
 void USCARBodyCombatSubsystem::SpawnHitFeedback(const FSCARBodyCombatHitResult& HitResult)
@@ -534,6 +583,7 @@ void USCARBodyCombatSubsystem::Deinitialize()
 {
 	HideSkeletonHitMarker();
 	InvalidateHudCache();
+	UnregisterCanvasOverlayDraw();
 
 	if (PooledBloodFeedbackActor)
 	{
@@ -619,6 +669,12 @@ bool USCARBodyCombatSubsystem::ApplyHudHitMarkerLayout(
 		return false;
 	}
 
+	if (FVector2D::DistSquared(Viewport01, LastAppliedMarkerViewport01) < 1.0e-8f
+		&& FMath::IsNearlyEqual(SizePx, LastAppliedMarkerSizePx, 0.25f))
+	{
+		return true;
+	}
+
 	UWorld* World = GetWorld();
 	APlayerController* PlayerController = World ? World->GetFirstPlayerController() : nullptr;
 	if (!PlayerController)
@@ -666,6 +722,8 @@ bool USCARBodyCombatSubsystem::ApplyHudHitMarkerLayout(
 	HitMarkerImage->SetRenderOpacity(1.f);
 	SCARBodyCombatFeedback::EnsureWidgetChainVisible(HitMarkerImage);
 	HitMarkerImage->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	LastAppliedMarkerViewport01 = Viewport01;
+	LastAppliedMarkerSizePx = SizePx;
 	return true;
 }
 
@@ -740,14 +798,20 @@ void USCARBodyCombatSubsystem::ShowSkeletonHitMarker(const FSCARBodyCombatHitRes
 
 	if (!bWasVisible && bPlayHudHitMarkerBlink)
 	{
-		UWorld* World = GetWorld();
-		const APlayerController* PlayerController = World ? World->GetFirstPlayerController() : nullptr;
-		const APawn* Pawn = PlayerController ? PlayerController->GetPawn() : nullptr;
-		if (UUserWidget* HudWidget = SCARBodyCombatFeedback::FindCharacterHudWidget(Pawn))
+		const double NowSeconds = FPlatformTime::Seconds();
+		if (LastHudBlinkPlaySeconds < 0.0
+			|| NowSeconds - LastHudBlinkPlaySeconds >= static_cast<double>(MinHitSoundIntervalSeconds))
 		{
-			SCARBodyCombatFeedback::PlayHudCustomEvent(
-				HudWidget,
-				HitResult.bKilledTarget ? FName(TEXT("HitMarkerDead")) : FName(TEXT("HitmarkerEffect")));
+			LastHudBlinkPlaySeconds = NowSeconds;
+			UWorld* World = GetWorld();
+			const APlayerController* PlayerController = World ? World->GetFirstPlayerController() : nullptr;
+			const APawn* Pawn = PlayerController ? PlayerController->GetPawn() : nullptr;
+			if (UUserWidget* HudWidget = SCARBodyCombatFeedback::FindCharacterHudWidget(Pawn))
+			{
+				SCARBodyCombatFeedback::PlayHudCustomEvent(
+					HudWidget,
+					HitResult.bKilledTarget ? FName(TEXT("HitMarkerDead")) : FName(TEXT("HitmarkerEffect")));
+			}
 		}
 	}
 
@@ -759,6 +823,9 @@ void USCARBodyCombatSubsystem::HideSkeletonHitMarker()
 	bSkeletonHitMarkerVisible = false;
 	SkeletonHitMarkerHideRemaining = 0.f;
 	bUseCanvasHitMarkerFallback = false;
+	LastAppliedMarkerViewport01 = FVector2D(-1.f, -1.f);
+	LastAppliedMarkerSizePx = -1.f;
+	UnregisterCanvasOverlayDraw();
 
 	if (UImage* HitMarkerImage = FindHudHitMarkerImage())
 	{
@@ -799,4 +866,6 @@ void USCARBodyCombatSubsystem::UpdateSkeletonHitMarkerOverlay()
 	{
 		bUseCanvasHitMarkerFallback = true;
 	}
+
+	SyncCanvasOverlayDrawRegistration();
 }
