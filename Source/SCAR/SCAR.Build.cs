@@ -14,6 +14,10 @@ public class SCAR : ModuleRules
 				"CoreUObject",
 				"Engine",
 				"AugmentedReality",
+				"UMG",
+				"Slate",
+				"SlateCore",
+				"Niagara",
 			});
 
 		if (Target.Platform == UnrealTargetPlatform.IOS)

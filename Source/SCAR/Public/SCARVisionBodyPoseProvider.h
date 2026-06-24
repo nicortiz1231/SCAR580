@@ -41,6 +41,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "SCAR|Body Detection")
 	const TArray<FSCARScreenSpaceBodyTarget>& GetTargets() const { return Targets; }
 
+	/** Vision image-normalized joint -> UE viewport 01 (top-left origin). */
+	UFUNCTION(BlueprintPure, Category = "SCAR|Body Detection")
+	static FVector2D NormalizedToViewport01(const FVector2D& VisionNormalized);
+
 	void TickDetection(UWorld* World);
 
 private:

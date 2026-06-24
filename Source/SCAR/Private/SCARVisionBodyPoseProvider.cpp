@@ -221,15 +221,18 @@ int32 USCARVisionBodyPoseProvider::AssociateOrCreateLocalId(const FVector2D& Bou
 	return NextLocalId++;
 }
 
+FVector2D USCARVisionBodyPoseProvider::NormalizedToViewport01(const FVector2D& VisionNormalized)
+{
+	return FVector2D(VisionNormalized.X, 1.f - VisionNormalized.Y);
+}
+
 FVector2D USCARVisionBodyPoseProvider::ToViewportPosition(const FVector2D& VisionNormalized) const
 {
-	float ViewportX = VisionNormalized.X;
-	float ViewportY = 1.f - VisionNormalized.Y;
-
+	FVector2D Viewport = NormalizedToViewport01(VisionNormalized);
 	if (bMirrorViewportX)
 	{
-		ViewportX = 1.f - ViewportX;
+		Viewport.X = 1.f - Viewport.X;
 	}
 
-	return FVector2D(ViewportX, ViewportY);
+	return Viewport;
 }
