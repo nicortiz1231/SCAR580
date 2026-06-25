@@ -4,7 +4,7 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP="${PROJECT_DIR}/Saved/StagedBuilds/IOS/SCAR.app"
-DEVICE="${1:-00008150-001679820A38401C}"
+DEVICE="${1:-3DBEAC23-7953-55CB-983B-953460E23F13}"
 MAP="${2:-/Game/SCAR580/Maps/Map_AR}"
 
 if [[ ! -d "$APP" ]]; then

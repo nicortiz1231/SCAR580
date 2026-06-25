@@ -28,7 +28,11 @@ FSCARBodyCombatHitResult USCARBodyCombatBlueprintLibrary::TryApplyARBodyShot(
 {
 	if (USCARBodyCombatSubsystem* Subsystem = GetBodyCombatSubsystem(WorldContextObject))
 	{
-		return Subsystem->TryApplyShot(WorldContextObject, BaseDamage, CriticalMultiplier, bRequirePersonInPreview);
+		return Subsystem->TryApplyShot(
+			WorldContextObject,
+			BaseDamage,
+			CriticalMultiplier,
+			bRequirePersonInPreview);
 	}
 
 	return FSCARBodyCombatHitResult();

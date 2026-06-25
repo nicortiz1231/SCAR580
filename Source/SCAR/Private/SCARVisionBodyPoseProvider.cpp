@@ -2,6 +2,7 @@
 
 #include "ARBlueprintLibrary.h"
 #include "ARTextures.h"
+#include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "HAL/PlatformTime.h"
 #include "SCARVisionBodyPoseBridge.h"
@@ -10,6 +11,7 @@
 #include "AppleARKitTextures.h"
 #include "AppleImageUtilsTypes.h"
 #include "CoreVideo/CoreVideo.h"
+#include "iOS/SCARVisionBodyPoseIOS.h"
 #endif
 
 bool USCARVisionBodyPoseProvider::IsSupported() const
@@ -24,20 +26,37 @@ void USCARVisionBodyPoseProvider::TickDetection(UWorld* World)
 		return;
 	}
 
-	const double NowSeconds = World->GetTimeSeconds();
+	const double NowWorldSeconds = World->GetTimeSeconds();
 	const float MinInterval = FMath::Max(DetectionIntervalSeconds, 0.03f);
-	if (NowSeconds < NextDetectionTimeSeconds)
+	if (NowWorldSeconds < NextDetectionTimeSeconds)
 	{
 		return;
 	}
 
-	NextDetectionTimeSeconds = NowSeconds + MinInterval;
+	NextDetectionTimeSeconds = NowWorldSeconds + MinInterval;
 
-	int32 Width = 0;
-	int32 Height = 0;
-	if (!TryAcquireCameraRgba(World, RgbaBuffer, Width, Height))
+	const double DetectedAtSeconds = FPlatformTime::Seconds();
+	PreviousTargets = Targets;
+
+	int32 BodyCount = 0;
+	const bool bHadCamera = TryRunDetectionFromCamera(World, BodyCount);
+
+	if (bHadCamera && BodyCount > 0)
 	{
-		return;
+		BuildTargetsFromNative(BodyCount, DetectedAtSeconds);
+	}
+	else
+	{
+		PruneStaleTargets(DetectedAtSeconds, 0.35);
+	}
+}
+
+int32 USCARVisionBodyPoseProvider::RunVisionOnPixelBuffer(void* PixelBuffer)
+{
+#if PLATFORM_IOS
+	if (!PixelBuffer)
+	{
+		return 0;
 	}
 
 	if (NativeOutput.Num() != FSCARVisionBodyPoseBridge::MaxBodies * FSCARVisionBodyPoseBridge::BodyStride)
@@ -45,102 +64,155 @@ void USCARVisionBodyPoseProvider::TickDetection(UWorld* World)
 		NativeOutput.SetNumZeroed(FSCARVisionBodyPoseBridge::MaxBodies * FSCARVisionBodyPoseBridge::BodyStride);
 	}
 
-	const int32 BodyCount = FSCARVisionBodyPoseBridge::DetectFromRgba(
-		RgbaBuffer.GetData(),
-		Width,
-		Height,
-		VisionImageOrientation,
-		MinJointConfidence,
-		NativeOutput,
-		MaxBodies,
-		FSCARVisionBodyPoseBridge::JointCount);
-
-	PreviousTargets = Targets;
-	BuildTargetsFromNative(BodyCount, NowSeconds);
-}
-
-bool USCARVisionBodyPoseProvider::TryAcquireCameraRgba(UWorld* World, TArray<uint8>& OutRgba, int32& OutWidth, int32& OutHeight) const
-{
-#if PLATFORM_IOS
-	(void)World;
-
-	UARTexture* CameraTexture = UARBlueprintLibrary::GetARTexture(EARTextureType::CameraImage);
-	const UAppleARKitTextureCameraImage* AppleTexture = Cast<UAppleARKitTextureCameraImage>(CameraTexture);
-	if (!AppleTexture)
-	{
-		return false;
-	}
-
-	CVPixelBufferRef PixelBuffer = AppleTexture->GetPixelBuffer();
-	if (!PixelBuffer)
-	{
-		return false;
-	}
-
-	CVPixelBufferLockBaseAddress(PixelBuffer, kCVPixelBufferLock_ReadOnly);
-
-	const int32 SourceWidth = CVPixelBufferGetWidth(PixelBuffer);
-	const int32 SourceHeight = CVPixelBufferGetHeight(PixelBuffer);
-	if (SourceWidth <= 0 || SourceHeight <= 0)
-	{
-		CVPixelBufferUnlockBaseAddress(PixelBuffer, kCVPixelBufferLock_ReadOnly);
-		return false;
-	}
-
 	const int32 MaxDim = FMath::Max(64, MaxImageDimension);
-	const float Scale = static_cast<float>(MaxDim) / static_cast<float>(FMath::Max(SourceWidth, SourceHeight));
-	OutWidth = FMath::Max(1, FMath::RoundToInt(SourceWidth * Scale));
-	OutHeight = FMath::Max(1, FMath::RoundToInt(SourceHeight * Scale));
 
-	OutRgba.SetNumUninitialized(OutWidth * OutHeight * 4);
-
-	const OSType PixelFormat = CVPixelBufferGetPixelFormatType(PixelBuffer);
-	const uint8* BaseAddress = static_cast<const uint8*>(CVPixelBufferGetBaseAddress(PixelBuffer));
-	const size_t BytesPerRow = CVPixelBufferGetBytesPerRow(PixelBuffer);
-
-	for (int32 Y = 0; Y < OutHeight; ++Y)
+	auto RunAtOrientation = [this, PixelBuffer, MaxDim](const int32 Orientation) -> int32
 	{
-		const int32 SourceY = FMath::Clamp(FMath::RoundToInt((static_cast<float>(Y) + 0.5f) / Scale - 0.5f), 0, SourceHeight - 1);
-		for (int32 X = 0; X < OutWidth; ++X)
-		{
-			const int32 SourceX = FMath::Clamp(FMath::RoundToInt((static_cast<float>(X) + 0.5f) / Scale - 0.5f), 0, SourceWidth - 1);
-			const int32 DestIndex = (Y * OutWidth + X) * 4;
+		int32 Count = FSCARVisionBodyPoseBridge::DetectFromPixelBufferDownscaled(
+			PixelBuffer,
+			MaxDim,
+			Orientation,
+			MinJointConfidence,
+			NativeOutput,
+			MaxBodies,
+			FSCARVisionBodyPoseBridge::JointCount);
 
-			if (PixelFormat == kCVPixelFormatType_32BGRA)
+		if (Count == 0)
+		{
+			Count = FSCARVisionBodyPoseBridge::DetectFromPixelBuffer(
+				PixelBuffer,
+				Orientation,
+				MinJointConfidence,
+				NativeOutput,
+				MaxBodies,
+				FSCARVisionBodyPoseBridge::JointCount);
+		}
+
+		return Count;
+	};
+
+	int32 Orientation = FMath::Clamp(VisionImageOrientation, 1, 8);
+	if (bAutoDetectOrientation)
+	{
+		Orientation = FMath::Clamp(CachedAutoOrientation, 1, 8);
+	}
+
+	int32 BodyCount = RunAtOrientation(Orientation);
+
+	if (BodyCount == 0 && bAutoDetectOrientation)
+	{
+		int32 BestCount = 0;
+		int32 BestOrientation = Orientation;
+		for (int32 Candidate = 1; Candidate <= 8; ++Candidate)
+		{
+			if (Candidate == Orientation)
 			{
-				const uint8* Pixel = BaseAddress + SourceY * BytesPerRow + SourceX * 4;
-				OutRgba[DestIndex + 0] = Pixel[2];
-				OutRgba[DestIndex + 1] = Pixel[1];
-				OutRgba[DestIndex + 2] = Pixel[0];
-				OutRgba[DestIndex + 3] = 255;
+				continue;
 			}
-			else if (PixelFormat == kCVPixelFormatType_32ARGB)
+
+			const int32 CandidateCount = RunAtOrientation(Candidate);
+			if (CandidateCount > BestCount)
 			{
-				const uint8* Pixel = BaseAddress + SourceY * BytesPerRow + SourceX * 4;
-				OutRgba[DestIndex + 0] = Pixel[1];
-				OutRgba[DestIndex + 1] = Pixel[2];
-				OutRgba[DestIndex + 2] = Pixel[3];
-				OutRgba[DestIndex + 3] = 255;
+				BestCount = CandidateCount;
+				BestOrientation = Candidate;
 			}
-			else
-			{
-				OutRgba[DestIndex + 0] = 0;
-				OutRgba[DestIndex + 1] = 0;
-				OutRgba[DestIndex + 2] = 0;
-				OutRgba[DestIndex + 3] = 255;
-			}
+		}
+
+		if (BestCount > 0)
+		{
+			CachedAutoOrientation = BestOrientation;
+			Orientation = BestOrientation;
+			BodyCount = BestCount;
 		}
 	}
 
-	CVPixelBufferUnlockBaseAddress(PixelBuffer, kCVPixelBufferLock_ReadOnly);
+	DebugLastOrientation = Orientation;
+	return BodyCount;
+#else
+	(void)PixelBuffer;
+	return 0;
+#endif
+}
+
+bool USCARVisionBodyPoseProvider::TryRunDetectionFromCamera(UWorld* World, int32& OutBodyCount)
+{
+	OutBodyCount = 0;
+	DebugLastCameraSource = TEXT("none");
+	bDebugHadCameraBuffer = false;
+#if PLATFORM_IOS
+	(void)World;
+
+	CVPixelBufferRef PixelBuffer = nullptr;
+	FString Source = TEXT("none");
+
+	// Prefer UE's AR texture wrapper — avoids raw ARSession / ARFrame pointers that can
+	// be stale during session startup and crash inside objc_msgSend on device.
+	if (UARTexture* CameraTexture = UARBlueprintLibrary::GetARTexture(EARTextureType::CameraImage))
+	{
+		if (const IAppleImageInterface* AppleImage = Cast<IAppleImageInterface>(CameraTexture))
+		{
+			PixelBuffer = AppleImage->GetPixelBuffer();
+			if (PixelBuffer)
+			{
+				Source = TEXT("apple_iface");
+			}
+		}
+
+		if (!PixelBuffer)
+		{
+			if (const UAppleARKitTextureCameraImage* AppleTexture = Cast<UAppleARKitTextureCameraImage>(CameraTexture))
+			{
+				PixelBuffer = AppleTexture->GetPixelBuffer();
+				if (PixelBuffer)
+				{
+					Source = TEXT("ar_texture");
+				}
+			}
+		}
+
+		if (!PixelBuffer)
+		{
+			Source = FString::Printf(TEXT("tex_%s"), *CameraTexture->GetClass()->GetName());
+		}
+	}
+
+	if (!PixelBuffer)
+	{
+		const FSCARARKitCameraPixelBufferResult ArkitResult = SCAR_TryGetARKitCameraPixelBuffer();
+		if (ArkitResult.PixelBuffer)
+		{
+			PixelBuffer = static_cast<CVPixelBufferRef>(ArkitResult.PixelBuffer);
+			Source = ArkitResult.Source;
+		}
+		else
+		{
+			Source = ArkitResult.Source.IsEmpty() ? TEXT("no_texture") : ArkitResult.Source;
+		}
+	}
+
+	DebugLastCameraSource = Source;
+	bDebugHadCameraBuffer = PixelBuffer != nullptr;
+	if (!PixelBuffer)
+	{
+		DebugLastBodyCount = 0;
+		return false;
+	}
+
+	OutBodyCount = RunVisionOnPixelBuffer(PixelBuffer);
+	DebugLastBodyCount = OutBodyCount;
 	return true;
 #else
 	(void)World;
-	(void)OutRgba;
-	OutWidth = 0;
-	OutHeight = 0;
 	return false;
 #endif
+}
+
+void USCARVisionBodyPoseProvider::PruneStaleTargets(const double NowSeconds, const float MaxAgeSeconds)
+{
+	Targets.RemoveAll([NowSeconds, MaxAgeSeconds](const FSCARScreenSpaceBodyTarget& Target)
+	{
+		return NowSeconds - Target.LastSeenTimeSeconds > MaxAgeSeconds;
+	});
 }
 
 void USCARVisionBodyPoseProvider::BuildTargetsFromNative(const int32 BodyCount, const double NowSeconds)
@@ -200,7 +272,7 @@ void USCARVisionBodyPoseProvider::BuildTargetsFromNative(const int32 BodyCount, 
 			Joint.bIsValid = X >= 0.f && Y >= 0.f && Confidence >= MinJointConfidence;
 			if (Joint.bIsValid)
 			{
-				// Camera-image normalized coordinates (Vision native, bottom-left origin).
+				// Unity ARScreenSpaceBodyTarget: normalized viewport, bottom-left origin.
 				Joint.NormalizedPosition = FVector2D(X, Y);
 			}
 		}
@@ -246,6 +318,7 @@ int32 USCARVisionBodyPoseProvider::AssociateOrCreateLocalId(
 
 FVector2D USCARVisionBodyPoseProvider::NormalizedToViewport01(const FVector2D& VisionNormalized)
 {
+	// Vision / Unity viewport bottom-left -> UE screen top-left.
 	return FVector2D(VisionNormalized.X, 1.f - VisionNormalized.Y);
 }
 

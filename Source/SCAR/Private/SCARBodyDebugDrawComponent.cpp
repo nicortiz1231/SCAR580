@@ -9,7 +9,7 @@
 #include "SCARBodyDetectionSubsystem.h"
 #include "SCARBodyDetectionTypes.h"
 #include "SCARBodyPose2DMapping.h"
-#include "SCARBodyScreenMapping.h"
+#include "SCARVisionBodyPoseProvider.h"
 
 namespace SCARBodyDebugDraw
 {
@@ -532,12 +532,7 @@ bool USCARBodyDebugDrawComponent::VisionJointToGuiPixels(
 		ImageUV.Y = 1.f - ImageUV.Y;
 	}
 
-	FVector2D Viewport01;
-	if (!SCARBodyScreenMapping::MapImageNormalizedToViewport01(ImageUV, Viewport01))
-	{
-		return false;
-	}
-
+	FVector2D Viewport01 = USCARVisionBodyPoseProvider::NormalizedToViewport01(ImageUV);
 	OutGuiPixels = FVector2D(Viewport01.X * ScreenWidth, Viewport01.Y * ScreenHeight);
 	return true;
 }

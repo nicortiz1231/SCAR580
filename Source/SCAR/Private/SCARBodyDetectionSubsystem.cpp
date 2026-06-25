@@ -2,7 +2,11 @@
 
 #include "ARBlueprintLibrary.h"
 #include "ARTrackable.h"
+#include "Engine/Engine.h"
+#include "Engine/World.h"
+#include "HAL/PlatformTime.h"
 #include "SCARVisionBodyPoseProvider.h"
+#include "TimerManager.h"
 
 void USCARBodyDetectionSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -120,6 +124,40 @@ void USCARBodyDetectionSubsystem::UpdateVisionTracking()
 		return;
 	}
 
+	if (bVisionDetectionPending)
+	{
+		return;
+	}
+
+	bVisionDetectionPending = true;
+	World->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this]()
+	{
+		bVisionDetectionPending = false;
+		FlushVisionDetection();
+	}));
+}
+
+void USCARBodyDetectionSubsystem::FlushVisionDetection()
+{
+	UWorld* World = GetWorld();
+	if (!World || !VisionProvider || !VisionProvider->IsSupported())
+	{
+		return;
+	}
+
+	const FARSessionStatus SessionStatus = UARBlueprintLibrary::GetARSessionStatus();
+	if (SessionStatus.Status != EARSessionStatus::Running)
+	{
+		return;
+	}
+
+	// Skip vision until AR has produced at least one camera texture — raw ARKit pointers
+	// are not safe during the first frames after session start (device crash: objc_msgSend).
+	if (!UARBlueprintLibrary::GetARTexture(EARTextureType::CameraImage))
+	{
+		return;
+	}
+
 	VisionProvider->TickDetection(World);
 	Snapshot.VisionTargets = VisionProvider->GetTargets();
 	Snapshot.bHasVisionTarget = Snapshot.VisionTargets.Num() > 0;
@@ -139,10 +177,32 @@ void USCARBodyDetectionSubsystem::UpdateVisionTracking()
 	}
 
 	bHadVisionTargetLastFrame = Snapshot.bHasVisionTarget;
+	PublishSnapshot();
 }
 
 void USCARBodyDetectionSubsystem::PublishSnapshot()
 {
 	Snapshot.bPersonInCameraPreview = Snapshot.bHas3DBody || Snapshot.bHasPose2D || Snapshot.bHasVisionTarget;
 	OnDetectionUpdated.Broadcast(Snapshot);
+
+#if !UE_BUILD_SHIPPING
+	if (GEngine && VisionProvider)
+	{
+		static double LastHudRefreshSeconds = 0.0;
+		const double NowSeconds = FPlatformTime::Seconds();
+		if (NowSeconds - LastHudRefreshSeconds >= 0.5)
+		{
+			LastHudRefreshSeconds = NowSeconds;
+			const FString HudMessage = FString::Printf(
+				TEXT("Vision: %d bodies | cam=%s buf=%s orient=%d | active=%d | Pose2D=%d"),
+				VisionProvider->GetDebugLastBodyCount(),
+				*VisionProvider->GetDebugLastCameraSource(),
+				VisionProvider->GetDebugHadCameraBuffer() ? TEXT("Y") : TEXT("N"),
+				VisionProvider->GetDebugLastOrientation(),
+				Snapshot.VisionTargets.Num(),
+				Snapshot.TrackedPoses2D.Num());
+			GEngine->AddOnScreenDebugMessage(74501, 0.55f, FColor::Cyan, HudMessage);
+		}
+	}
+#endif
 }

@@ -56,6 +56,26 @@ namespace SCARScreenSpaceBodyTargeting
 				&& Sample.JointImageUV[Index].Y >= 0.f;
 		}
 
+		bool MapVisionUVToViewport01(const FVector2D& VisionUV, FVector2D& OutViewport01)
+		{
+			OutViewport01 = USCARVisionBodyPoseProvider::NormalizedToViewport01(VisionUV);
+			return true;
+		}
+
+		bool MapBoundsVisionToViewport01(const FVector4& BoundsVision, FVector4& OutBoundsViewport01)
+		{
+			const FVector2D CornerMin = USCARVisionBodyPoseProvider::NormalizedToViewport01(
+				FVector2D(BoundsVision.X, BoundsVision.Y));
+			const FVector2D CornerMax = USCARVisionBodyPoseProvider::NormalizedToViewport01(
+				FVector2D(BoundsVision.Z, BoundsVision.W));
+			OutBoundsViewport01 = FVector4(
+				FMath::Min(CornerMin.X, CornerMax.X),
+				FMath::Min(CornerMin.Y, CornerMax.Y),
+				FMath::Max(CornerMin.X, CornerMax.X),
+				FMath::Max(CornerMin.Y, CornerMax.Y));
+			return true;
+		}
+
 		bool MapImageUVToViewport01(const FVector2D& ImageUV, FVector2D& OutViewport01)
 		{
 			if (SCARBodyScreenMapping::MapImageNormalizedToViewport01(ImageUV, OutViewport01))
@@ -224,7 +244,7 @@ namespace SCARScreenSpaceBodyTargeting
 		OutSample.JointValid.SetNum(Target.Joints.Num());
 		OutSample.JointImageUV.SetNum(Target.Joints.Num());
 
-		if (!MapBoundsImageToViewport01(Target.Bounds, OutSample.BoundsViewport01))
+		if (!MapBoundsVisionToViewport01(Target.Bounds, OutSample.BoundsViewport01))
 		{
 			const FVector2D BoundsMin = USCARVisionBodyPoseProvider::NormalizedToViewport01(
 				FVector2D(Target.Bounds.X, Target.Bounds.Y));
@@ -247,7 +267,7 @@ namespace SCARScreenSpaceBodyTargeting
 				continue;
 			}
 
-			MapImageUVToViewport01(Joint.NormalizedPosition, OutSample.JointViewport01[Index]);
+			MapVisionUVToViewport01(Joint.NormalizedPosition, OutSample.JointViewport01[Index]);
 		}
 
 		return Target.LocalId != INDEX_NONE;
@@ -590,7 +610,7 @@ namespace SCARScreenSpaceBodyTargeting
 		}
 
 		const FVector2D HitImageUV = FMath::Lerp(ImageA, ImageB, FMath::Clamp(BoneT, 0.f, 1.f));
-		return MapImageUVToViewport01(HitImageUV, OutViewport01);
+		return MapVisionUVToViewport01(HitImageUV, OutViewport01);
 	}
 
 	bool Viewport01ToWorldAtDistance(

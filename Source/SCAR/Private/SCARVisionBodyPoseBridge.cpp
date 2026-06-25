@@ -11,6 +11,25 @@ extern "C" int SCARVisionDetectHumanBodyPose2D(
 	int outputFloatCount,
 	int maxBodies,
 	int maxJoints);
+
+extern "C" int SCARVisionDetectHumanBodyPose2DFromPixelBuffer(
+	void* pixelBuffer,
+	int orientation,
+	float minConfidence,
+	float* output,
+	int outputFloatCount,
+	int maxBodies,
+	int maxJoints);
+
+extern "C" int SCARVisionDetectHumanBodyPose2DFromPixelBufferDownscaled(
+	void* pixelBuffer,
+	int maxImageDimension,
+	int orientation,
+	float minConfidence,
+	float* output,
+	int outputFloatCount,
+	int maxBodies,
+	int maxJoints);
 #endif
 
 bool FSCARVisionBodyPoseBridge::IsSupported()
@@ -50,6 +69,81 @@ int32 FSCARVisionBodyPoseBridge::DetectFromRgba(
 	(void)RgbaBytes;
 	(void)Width;
 	(void)Height;
+	(void)Orientation;
+	(void)MinConfidence;
+	(void)OutBuffer;
+	(void)InMaxBodies;
+	(void)InMaxJoints;
+	return 0;
+#endif
+}
+
+int32 FSCARVisionBodyPoseBridge::DetectFromPixelBuffer(
+	void* PixelBuffer,
+	const int32 Orientation,
+	const float MinConfidence,
+	TArray<float>& OutBuffer,
+	const int32 InMaxBodies,
+	const int32 InMaxJoints)
+{
+#if PLATFORM_IOS && !UE_EDITOR
+	if (!PixelBuffer)
+	{
+		return 0;
+	}
+
+	const int32 OutputFloatCount = InMaxBodies * BodyStride;
+	OutBuffer.SetNumZeroed(OutputFloatCount);
+
+	return SCARVisionDetectHumanBodyPose2DFromPixelBuffer(
+		PixelBuffer,
+		Orientation,
+		MinConfidence,
+		OutBuffer.GetData(),
+		OutputFloatCount,
+		InMaxBodies,
+		InMaxJoints);
+#else
+	(void)PixelBuffer;
+	(void)Orientation;
+	(void)MinConfidence;
+	(void)OutBuffer;
+	(void)InMaxBodies;
+	(void)InMaxJoints;
+	return 0;
+#endif
+}
+
+int32 FSCARVisionBodyPoseBridge::DetectFromPixelBufferDownscaled(
+	void* PixelBuffer,
+	const int32 MaxImageDimension,
+	const int32 Orientation,
+	const float MinConfidence,
+	TArray<float>& OutBuffer,
+	const int32 InMaxBodies,
+	const int32 InMaxJoints)
+{
+#if PLATFORM_IOS && !UE_EDITOR
+	if (!PixelBuffer)
+	{
+		return 0;
+	}
+
+	const int32 OutputFloatCount = InMaxBodies * BodyStride;
+	OutBuffer.SetNumZeroed(OutputFloatCount);
+
+	return SCARVisionDetectHumanBodyPose2DFromPixelBufferDownscaled(
+		PixelBuffer,
+		MaxImageDimension,
+		Orientation,
+		MinConfidence,
+		OutBuffer.GetData(),
+		OutputFloatCount,
+		InMaxBodies,
+		InMaxJoints);
+#else
+	(void)PixelBuffer;
+	(void)MaxImageDimension;
 	(void)Orientation;
 	(void)MinConfidence;
 	(void)OutBuffer;

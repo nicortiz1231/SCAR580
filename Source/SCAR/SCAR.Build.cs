@@ -18,6 +18,7 @@ public class SCAR : ModuleRules
 				"Slate",
 				"SlateCore",
 				"Niagara",
+				"EnhancedInput",
 			});
 
 		if (Target.Platform == UnrealTargetPlatform.IOS)
@@ -36,6 +37,7 @@ public class SCAR : ModuleRules
 					"Plugins/Runtime/AR/AppleAR/AppleARKit/Source/AppleARKit/Private"));
 
 			PublicFrameworks.Add("Vision");
+			PublicFrameworks.Add("CoreImage");
 		}
 	}
 }

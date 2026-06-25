@@ -95,6 +95,14 @@ public:
 		float CriticalMultiplier,
 		bool bRequirePersonInPreview = true);
 
+	/** Unity ARCombatUiRuntimeBootstrap parity: run Vision assist after the frame's physics hitscan. */
+	UFUNCTION(BlueprintCallable, Category = "SCAR|Body Combat")
+	void QueueDeferredVisionShot(
+		const UObject* WorldContextObject,
+		float BaseDamage,
+		float CriticalMultiplier,
+		bool bRequirePersonInPreview = true);
+
 	UFUNCTION(BlueprintPure, Category = "SCAR|Body Combat")
 	static FVector2D GetCombatAimViewport01(const UObject* WorldContextObject);
 
@@ -147,6 +155,7 @@ private:
 	void UnregisterCanvasOverlayDraw();
 	void OnCanvasOverlayDraw(UCanvas* Canvas, APlayerController* PlayerController);
 	void SyncCanvasOverlayDrawRegistration();
+	void FlushDeferredVisionShot();
 
 	UPROPERTY()
 	TObjectPtr<UTexture2D> HitMarkerTexture;
@@ -180,4 +189,15 @@ private:
 	FVector2D FallbackHitViewport01 = FVector2D::ZeroVector;
 	float MarkerScreenSizePx = 32.f;
 	bool bMarkerHeadshot = false;
+
+	struct FPendingDeferredVisionShot
+	{
+		TWeakObjectPtr<const UObject> WorldContext;
+		float BaseDamage = 0.f;
+		float CriticalMultiplier = 1.f;
+		bool bRequirePersonInPreview = true;
+		bool bPending = false;
+	};
+
+	FPendingDeferredVisionShot PendingDeferredVisionShot;
 };

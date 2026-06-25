@@ -31,9 +31,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Detection")
 	bool bMirrorViewportX = false;
 
-	/** CGImagePropertyOrientation value. Unity default: Right = 6. */
+	/** CGImagePropertyOrientation value. Unity default: Right = 6. Auto-updated when bAutoDetectOrientation is true. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Detection")
 	int32 VisionImageOrientation = 6;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Detection")
+	bool bAutoDetectOrientation = true;
 
 	UFUNCTION(BlueprintPure, Category = "SCAR|Body Detection")
 	bool IsSupported() const;
@@ -41,7 +44,19 @@ public:
 	UFUNCTION(BlueprintPure, Category = "SCAR|Body Detection")
 	const TArray<FSCARScreenSpaceBodyTarget>& GetTargets() const { return Targets; }
 
-	/** Vision image-normalized joint -> UE viewport 01 (top-left origin). */
+	UFUNCTION(BlueprintPure, Category = "SCAR|Body Detection|Debug")
+	int32 GetDebugLastBodyCount() const { return DebugLastBodyCount; }
+
+	UFUNCTION(BlueprintPure, Category = "SCAR|Body Detection|Debug")
+	int32 GetDebugLastOrientation() const { return DebugLastOrientation; }
+
+	UFUNCTION(BlueprintPure, Category = "SCAR|Body Detection|Debug")
+	FString GetDebugLastCameraSource() const { return DebugLastCameraSource; }
+
+	UFUNCTION(BlueprintPure, Category = "SCAR|Body Detection|Debug")
+	bool GetDebugHadCameraBuffer() const { return bDebugHadCameraBuffer; }
+
+	/** Vision viewport bottom-left 01 -> UE viewport top-left 01 (Unity ARScreenSpaceBodyTarget parity). */
 	UFUNCTION(BlueprintPure, Category = "SCAR|Body Detection")
 	static FVector2D NormalizedToViewport01(const FVector2D& VisionNormalized);
 
@@ -54,13 +69,20 @@ private:
 	UPROPERTY()
 	TArray<FSCARScreenSpaceBodyTarget> PreviousTargets;
 
-	TArray<uint8> RgbaBuffer;
 	TArray<float> NativeOutput;
 	double NextDetectionTimeSeconds = 0.0;
 	int32 NextLocalId = 1;
+	int32 CachedAutoOrientation = 6;
 
-	bool TryAcquireCameraRgba(UWorld* World, TArray<uint8>& OutRgba, int32& OutWidth, int32& OutHeight) const;
+	int32 DebugLastBodyCount = 0;
+	int32 DebugLastOrientation = 6;
+	FString DebugLastCameraSource = TEXT("none");
+	bool bDebugHadCameraBuffer = false;
+
+	bool TryRunDetectionFromCamera(UWorld* World, int32& OutBodyCount);
+	int32 RunVisionOnPixelBuffer(void* PixelBuffer);
 	void BuildTargetsFromNative(int32 BodyCount, double NowSeconds);
+	void PruneStaleTargets(double NowSeconds, float MaxAgeSeconds);
 	int32 AssociateOrCreateLocalId(const FVector2D& BoundsCenter, TArray<bool>& PreviousUsed);
 	FVector2D ToViewportPosition(const FVector2D& VisionNormalized) const;
 };

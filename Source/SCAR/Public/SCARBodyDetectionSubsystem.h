@@ -67,8 +67,10 @@ private:
 	bool bHad3DBodyLastFrame = false;
 	bool bHadPose2DLastFrame = false;
 	bool bHadVisionTargetLastFrame = false;
+	bool bVisionDetectionPending = false;
 
 	void UpdateArkitBodyTracking();
 	void UpdateVisionTracking();
+	void FlushVisionDetection();
 	void PublishSnapshot();
 };

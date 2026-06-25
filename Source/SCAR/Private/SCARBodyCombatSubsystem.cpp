@@ -10,11 +10,13 @@
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Pawn.h"
+#include "HAL/PlatformTime.h"
 #include "Kismet/GameplayStatics.h"
 #include "SCARBodyDetectionSubsystem.h"
 #include "SCARBodyHitFeedbackActor.h"
 #include "SCARScreenSpaceBodyTargeting.h"
 #include "SCARBodyScreenMapping.h"
+#include "SCARVisionBodyPoseProvider.h"
 #include "Engine/Texture2D.h"
 #include "Sound/SoundBase.h"
 #include "UObject/UnrealType.h"
@@ -116,9 +118,16 @@ bool USCARBodyCombatSubsystem::BuildAimSamples(
 	}
 
 	const FSCARBodyDetectionSnapshot& Snapshot = DetectionSubsystem->GetSnapshot();
+	const double NowSeconds = FPlatformTime::Seconds();
 
+	// Vision multi-body is authoritative when available (Unity ARScreenSpaceTargetResolver parity).
 	for (const FSCARScreenSpaceBodyTarget& Target : Snapshot.VisionTargets)
 	{
+		if (NowSeconds - Target.LastSeenTimeSeconds > MaxTargetAgeSeconds)
+		{
+			continue;
+		}
+
 		SCARScreenSpaceBodyTargeting::FSCARScreenSpaceAimSample Sample;
 		if (SCARScreenSpaceBodyTargeting::BuildVisionAimSample(Target, Sample))
 		{
@@ -126,38 +135,46 @@ bool USCARBodyCombatSubsystem::BuildAimSamples(
 		}
 	}
 
-	if (OutSamples.Num() == 0 && Snapshot.bHasPose2D)
+	if (OutSamples.Num() > 0)
 	{
-		int32 BestPoseIndex = INDEX_NONE;
-		int32 MostTrackedJoints = -1;
-		for (int32 PoseIndex = 0; PoseIndex < Snapshot.TrackedPoses2D.Num(); ++PoseIndex)
-		{
-			int32 TrackedCount = 0;
-			for (const bool bTracked : Snapshot.TrackedPoses2D[PoseIndex].IsJointTracked)
-			{
-				TrackedCount += bTracked ? 1 : 0;
-			}
+		return true;
+	}
 
-			if (TrackedCount > MostTrackedJoints)
-			{
-				MostTrackedJoints = TrackedCount;
-				BestPoseIndex = PoseIndex;
-			}
+	// Fallback: ARKit Pose2D only tracks one body reliably.
+	if (!Snapshot.bHasPose2D)
+	{
+		return false;
+	}
+
+	int32 BestPoseIndex = INDEX_NONE;
+	int32 MostTrackedJoints = -1;
+	for (int32 PoseIndex = 0; PoseIndex < Snapshot.TrackedPoses2D.Num(); ++PoseIndex)
+	{
+		int32 TrackedCount = 0;
+		for (const bool bTracked : Snapshot.TrackedPoses2D[PoseIndex].IsJointTracked)
+		{
+			TrackedCount += bTracked ? 1 : 0;
 		}
 
-		if (Snapshot.TrackedPoses2D.IsValidIndex(BestPoseIndex))
+		if (TrackedCount > MostTrackedJoints)
 		{
-			SCARScreenSpaceBodyTargeting::FSCARScreenSpaceAimSample Sample;
-			if (SCARScreenSpaceBodyTargeting::BuildPose2DAimSample(
-				Snapshot.TrackedPoses2D[BestPoseIndex],
-				PlayerController,
-				bFlipPose2DY,
-				bUseImageSpacePose2DMapping,
-				0,
-				Sample))
-			{
-				OutSamples.Add(Sample);
-			}
+			MostTrackedJoints = TrackedCount;
+			BestPoseIndex = PoseIndex;
+		}
+	}
+
+	if (Snapshot.TrackedPoses2D.IsValidIndex(BestPoseIndex))
+	{
+		SCARScreenSpaceBodyTargeting::FSCARScreenSpaceAimSample Sample;
+		if (SCARScreenSpaceBodyTargeting::BuildPose2DAimSample(
+			Snapshot.TrackedPoses2D[BestPoseIndex],
+			PlayerController,
+			bFlipPose2DY,
+			bUseImageSpacePose2DMapping,
+			0,
+			Sample))
+		{
+			OutSamples.Add(Sample);
 		}
 	}
 
@@ -373,10 +390,14 @@ FSCARBodyCombatHitResult USCARBodyCombatSubsystem::TryApplyShotAtViewport(
 	const ESCARVisionBodyJoint HitJoint = AnchorJointA;
 
 	FVector2D HitViewport01 = AimViewport01;
-	if (!SCARBodyScreenMapping::MapImageNormalizedToViewport01(HitImageUV, HitViewport01))
+	ESCARVisionBodyJoint FallbackJoint = AnchorJointA;
+	if (!SCARScreenSpaceBodyTargeting::ResolveHitViewportOnSample(
+		BestSample,
+		AimViewport01,
+		HitViewport01,
+		FallbackJoint))
 	{
-		ESCARVisionBodyJoint FallbackJoint = AnchorJointA;
-		SCARScreenSpaceBodyTargeting::ResolveHitViewportOnSample(BestSample, AimViewport01, HitViewport01, FallbackJoint);
+		HitViewport01 = USCARVisionBodyPoseProvider::NormalizedToViewport01(HitImageUV);
 	}
 
 	FVector HitWorldLocation = FVector::ZeroVector;
@@ -579,6 +600,40 @@ void USCARBodyCombatSubsystem::SpawnHitFeedback(const FSCARBodyCombatHitResult& 
 	}
 }
 
+void USCARBodyCombatSubsystem::QueueDeferredVisionShot(
+	const UObject* WorldContextObject,
+	const float BaseDamage,
+	const float CriticalMultiplier,
+	const bool bRequirePersonInPreview)
+{
+	PendingDeferredVisionShot.WorldContext = WorldContextObject;
+	PendingDeferredVisionShot.BaseDamage = BaseDamage;
+	PendingDeferredVisionShot.CriticalMultiplier = CriticalMultiplier;
+	PendingDeferredVisionShot.bRequirePersonInPreview = bRequirePersonInPreview;
+	PendingDeferredVisionShot.bPending = true;
+}
+
+void USCARBodyCombatSubsystem::FlushDeferredVisionShot()
+{
+	if (!PendingDeferredVisionShot.bPending)
+	{
+		return;
+	}
+
+	const UObject* WorldContext = PendingDeferredVisionShot.WorldContext.Get();
+	const float BaseDamage = PendingDeferredVisionShot.BaseDamage;
+	const float CriticalMultiplier = PendingDeferredVisionShot.CriticalMultiplier;
+	const bool bRequirePersonInPreview = PendingDeferredVisionShot.bRequirePersonInPreview;
+	PendingDeferredVisionShot.bPending = false;
+
+	if (!WorldContext)
+	{
+		return;
+	}
+
+	TryApplyShot(WorldContext, BaseDamage, CriticalMultiplier, bRequirePersonInPreview);
+}
+
 void USCARBodyCombatSubsystem::Deinitialize()
 {
 	HideSkeletonHitMarker();
@@ -596,6 +651,8 @@ void USCARBodyCombatSubsystem::Deinitialize()
 
 void USCARBodyCombatSubsystem::Tick(const float DeltaTime)
 {
+	FlushDeferredVisionShot();
+
 	if (!bSkeletonHitMarkerVisible)
 	{
 		return;
@@ -618,7 +675,9 @@ TStatId USCARBodyCombatSubsystem::GetStatId() const
 
 bool USCARBodyCombatSubsystem::IsTickable() const
 {
-	return bSkeletonHitMarkerVisible && GetWorld() != nullptr && !IsTemplate();
+	return (bSkeletonHitMarkerVisible || PendingDeferredVisionShot.bPending)
+		&& GetWorld() != nullptr
+		&& !IsTemplate();
 }
 
 UImage* USCARBodyCombatSubsystem::FindHudHitMarkerImage() const

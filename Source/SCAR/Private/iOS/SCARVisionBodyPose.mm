@@ -1,4 +1,6 @@
 #import <CoreGraphics/CoreGraphics.h>
+#import <CoreImage/CoreImage.h>
+#import <CoreVideo/CoreVideo.h>
 #import <Foundation/Foundation.h>
 #import <ImageIO/ImageIO.h>
 #import <Vision/Vision.h>
@@ -48,58 +50,145 @@ static void SCARVisionClearOutput(float *Output, int OutputFloatCount)
 	}
 }
 
-extern "C" int SCARVisionDetectHumanBodyPose2D(
-	const uint8_t *rgbaBytes,
-	int width,
-	int height,
-	int orientation,
-	float minConfidence,
-	float *output,
-	int outputFloatCount,
-	int maxBodies,
-	int maxJoints)
+static int SCARVisionWriteObservationsToOutput(
+	NSArray<VNHumanBodyPoseObservation *> *Observations,
+	const float MinConfidence,
+	float *Output,
+	const int OutputFloatCount,
+	const int MaxBodies,
+	const int MaxJoints)
 {
-	SCARVisionClearOutput(output, outputFloatCount);
+	const int JointCount = MIN(MaxJoints, kJointCount);
+	const int BodyStride = 5 + MaxJoints * 3;
+	if (OutputFloatCount < BodyStride)
+	{
+		return 0;
+	}
 
+	NSArray<VNHumanBodyPoseObservationJointName> *JointNames = SCARVisionJointNames();
+	int Written = 0;
+
+	for (VNHumanBodyPoseObservation *Observation in Observations)
+	{
+		if (Written >= MaxBodies)
+		{
+			break;
+		}
+
+		const int Offset = Written * BodyStride;
+		if (Offset + BodyStride > OutputFloatCount)
+		{
+			break;
+		}
+
+		float MinX = 1.0f;
+		float MinY = 1.0f;
+		float MaxX = 0.0f;
+		float MaxY = 0.0f;
+		float ConfidenceSum = 0.0f;
+		int TrackedCount = 0;
+
+		for (int Joint = 0; Joint < MaxJoints; Joint++)
+		{
+			const int JointOffset = Offset + 5 + Joint * 3;
+			Output[JointOffset] = -1.0f;
+			Output[JointOffset + 1] = -1.0f;
+			Output[JointOffset + 2] = 0.0f;
+		}
+
+		for (int Joint = 0; Joint < JointCount; Joint++)
+		{
+			NSError *PointError = nil;
+			VNRecognizedPoint *Point = [Observation recognizedPointForJointName:JointNames[Joint] error:&PointError];
+			if (PointError != nil || Point == nil || Point.confidence < MinConfidence)
+			{
+				continue;
+			}
+
+			const float X = (float)Point.location.x;
+			const float Y = (float)Point.location.y;
+			const int JointOffset = Offset + 5 + Joint * 3;
+			Output[JointOffset] = X;
+			Output[JointOffset + 1] = Y;
+			Output[JointOffset + 2] = (float)Point.confidence;
+
+			MinX = MIN(MinX, X);
+			MinY = MIN(MinY, Y);
+			MaxX = MAX(MaxX, X);
+			MaxY = MAX(MaxY, Y);
+			ConfidenceSum += (float)Point.confidence;
+			TrackedCount++;
+		}
+
+		if (TrackedCount < 4)
+		{
+			continue;
+		}
+
+		Output[Offset] = ConfidenceSum / TrackedCount;
+		Output[Offset + 1] = MAX(0.0f, MinX);
+		Output[Offset + 2] = MAX(0.0f, MinY);
+		Output[Offset + 3] = MIN(1.0f, MaxX);
+		Output[Offset + 4] = MIN(1.0f, MaxY);
+		Written++;
+	}
+
+	return Written;
+}
+
+static int SCARVisionPerformPixelBufferRequest(
+	CVPixelBufferRef PixelBuffer,
+	const int Orientation,
+	const float MinConfidence,
+	float *Output,
+	const int OutputFloatCount,
+	const int MaxBodies,
+	const int MaxJoints)
+{
 	if (@available(iOS 14.0, *))
 	{
-		if (rgbaBytes == NULL || output == NULL || width <= 0 || height <= 0 || maxBodies <= 0)
+		if (PixelBuffer == NULL || Output == NULL || MaxBodies <= 0)
 		{
 			return 0;
 		}
 
-		const int jointCount = MIN(maxJoints, kJointCount);
-		const int bodyStride = 5 + maxJoints * 3;
-		if (outputFloatCount < bodyStride)
+		VNDetectHumanBodyPoseRequest *Request = [[VNDetectHumanBodyPoseRequest alloc] init];
+		VNImageRequestHandler *Handler = [[VNImageRequestHandler alloc]
+			initWithCVPixelBuffer:PixelBuffer
+			orientation:(CGImagePropertyOrientation)Orientation
+			options:@{}];
+
+		NSError *Error = nil;
+		const BOOL Ok = [Handler performRequests:@[Request] error:&Error];
+		if (!Ok || Error != nil)
 		{
 			return 0;
 		}
 
-		CGDataProviderRef Provider = CGDataProviderCreateWithData(NULL, rgbaBytes, width * height * 4, NULL);
-		if (Provider == NULL)
-		{
-			return 0;
-		}
+		return SCARVisionWriteObservationsToOutput(
+			Request.results,
+			MinConfidence,
+			Output,
+			OutputFloatCount,
+			MaxBodies,
+			MaxJoints);
+	}
 
-		CGColorSpaceRef ColorSpace = CGColorSpaceCreateDeviceRGB();
-		const CGBitmapInfo BitmapInfo = kCGBitmapByteOrder32Big | kCGImageAlphaPremultipliedLast;
-		CGImageRef Image = CGImageCreate(
-			width,
-			height,
-			8,
-			32,
-			width * 4,
-			ColorSpace,
-			BitmapInfo,
-			Provider,
-			NULL,
-			false,
-			kCGRenderingIntentDefault);
+	return 0;
+}
 
-		CGColorSpaceRelease(ColorSpace);
-		CGDataProviderRelease(Provider);
-
-		if (Image == NULL)
+static int SCARVisionPerformCGImageRequest(
+	CGImageRef Image,
+	const int Orientation,
+	const float MinConfidence,
+	float *Output,
+	const int OutputFloatCount,
+	const int MaxBodies,
+	const int MaxJoints)
+{
+	if (@available(iOS 14.0, *))
+	{
+		if (Image == NULL || Output == NULL || MaxBodies <= 0)
 		{
 			return 0;
 		}
@@ -107,89 +196,189 @@ extern "C" int SCARVisionDetectHumanBodyPose2D(
 		VNDetectHumanBodyPoseRequest *Request = [[VNDetectHumanBodyPoseRequest alloc] init];
 		VNImageRequestHandler *Handler = [[VNImageRequestHandler alloc]
 			initWithCGImage:Image
-			orientation:(CGImagePropertyOrientation)orientation
+			orientation:(CGImagePropertyOrientation)Orientation
 			options:@{}];
 
 		NSError *Error = nil;
 		const BOOL Ok = [Handler performRequests:@[Request] error:&Error];
-		CGImageRelease(Image);
-
 		if (!Ok || Error != nil)
 		{
 			return 0;
 		}
 
-		NSArray<VNHumanBodyPoseObservation *> *Observations = Request.results;
-		NSArray<VNHumanBodyPoseObservationJointName> *JointNames = SCARVisionJointNames();
-
-		int Written = 0;
-		for (VNHumanBodyPoseObservation *Observation in Observations)
-		{
-			if (Written >= maxBodies)
-			{
-				break;
-			}
-
-			const int Offset = Written * bodyStride;
-			if (Offset + bodyStride > outputFloatCount)
-			{
-				break;
-			}
-
-			float MinX = 1.0f;
-			float MinY = 1.0f;
-			float MaxX = 0.0f;
-			float MaxY = 0.0f;
-			float ConfidenceSum = 0.0f;
-			int TrackedCount = 0;
-
-			for (int Joint = 0; Joint < maxJoints; Joint++)
-			{
-				const int JointOffset = Offset + 5 + Joint * 3;
-				output[JointOffset] = -1.0f;
-				output[JointOffset + 1] = -1.0f;
-				output[JointOffset + 2] = 0.0f;
-			}
-
-			for (int Joint = 0; Joint < jointCount; Joint++)
-			{
-				NSError *PointError = nil;
-				VNRecognizedPoint *Point = [Observation recognizedPointForJointName:JointNames[Joint] error:&PointError];
-				if (PointError != nil || Point == nil || Point.confidence < minConfidence)
-				{
-					continue;
-				}
-
-				const float X = (float)Point.location.x;
-				const float Y = (float)Point.location.y;
-				const int JointOffset = Offset + 5 + Joint * 3;
-				output[JointOffset] = X;
-				output[JointOffset + 1] = Y;
-				output[JointOffset + 2] = (float)Point.confidence;
-
-				MinX = MIN(MinX, X);
-				MinY = MIN(MinY, Y);
-				MaxX = MAX(MaxX, X);
-				MaxY = MAX(MaxY, Y);
-				ConfidenceSum += (float)Point.confidence;
-				TrackedCount++;
-			}
-
-			if (TrackedCount < 4)
-			{
-				continue;
-			}
-
-			output[Offset] = ConfidenceSum / TrackedCount;
-			output[Offset + 1] = MAX(0.0f, MinX);
-			output[Offset + 2] = MAX(0.0f, MinY);
-			output[Offset + 3] = MIN(1.0f, MaxX);
-			output[Offset + 4] = MIN(1.0f, MaxY);
-			Written++;
-		}
-
-		return Written;
+		return SCARVisionWriteObservationsToOutput(
+			Request.results,
+			MinConfidence,
+			Output,
+			OutputFloatCount,
+			MaxBodies,
+			MaxJoints);
 	}
 
 	return 0;
+}
+
+extern "C" int SCARVisionDetectHumanBodyPose2DFromPixelBuffer(
+	void *PixelBuffer,
+	int Orientation,
+	float MinConfidence,
+	float *Output,
+	int OutputFloatCount,
+	int MaxBodies,
+	int MaxJoints)
+{
+	SCARVisionClearOutput(Output, OutputFloatCount);
+	if (PixelBuffer == NULL)
+	{
+		return 0;
+	}
+
+	return SCARVisionPerformPixelBufferRequest(
+		static_cast<CVPixelBufferRef>(PixelBuffer),
+		Orientation,
+		MinConfidence,
+		Output,
+		OutputFloatCount,
+		MaxBodies,
+		MaxJoints);
+}
+
+extern "C" int SCARVisionDetectHumanBodyPose2D(
+	const uint8_t *RgbaBytes,
+	int Width,
+	int Height,
+	int Orientation,
+	float MinConfidence,
+	float *Output,
+	int OutputFloatCount,
+	int MaxBodies,
+	int MaxJoints)
+{
+	SCARVisionClearOutput(Output, OutputFloatCount);
+
+	if (RgbaBytes == NULL || Width <= 0 || Height <= 0 || MaxBodies <= 0)
+	{
+		return 0;
+	}
+
+	CGDataProviderRef Provider = CGDataProviderCreateWithData(NULL, RgbaBytes, Width * Height * 4, NULL);
+	if (Provider == NULL)
+	{
+		return 0;
+	}
+
+	CGColorSpaceRef ColorSpace = CGColorSpaceCreateDeviceRGB();
+	const CGBitmapInfo BitmapInfo = kCGBitmapByteOrder32Big | kCGImageAlphaPremultipliedLast;
+	CGImageRef Image = CGImageCreate(
+		Width,
+		Height,
+		8,
+		32,
+		Width * 4,
+		ColorSpace,
+		BitmapInfo,
+		Provider,
+		NULL,
+		false,
+		kCGRenderingIntentDefault);
+
+	CGColorSpaceRelease(ColorSpace);
+	CGDataProviderRelease(Provider);
+
+	if (Image == NULL)
+	{
+		return 0;
+	}
+
+	const int Written = SCARVisionPerformCGImageRequest(
+		Image,
+		Orientation,
+		MinConfidence,
+		Output,
+		OutputFloatCount,
+		MaxBodies,
+		MaxJoints);
+
+	CGImageRelease(Image);
+	return Written;
+}
+
+/** Unity parity: downscale AR camera frame to max dimension, convert to CGImage, run Vision on RGBA. */
+extern "C" int SCARVisionDetectHumanBodyPose2DFromPixelBufferDownscaled(
+	void *PixelBuffer,
+	int MaxImageDimension,
+	int Orientation,
+	float MinConfidence,
+	float *Output,
+	int OutputFloatCount,
+	int MaxBodies,
+	int MaxJoints)
+{
+	SCARVisionClearOutput(Output, OutputFloatCount);
+	if (PixelBuffer == NULL || MaxImageDimension <= 0)
+	{
+		return 0;
+	}
+
+	CVPixelBufferRef Buffer = static_cast<CVPixelBufferRef>(PixelBuffer);
+	const size_t SourceWidth = CVPixelBufferGetWidth(Buffer);
+	const size_t SourceHeight = CVPixelBufferGetHeight(Buffer);
+	if (SourceWidth == 0 || SourceHeight == 0)
+	{
+		return 0;
+	}
+
+	const float MaxSource = static_cast<float>(MAX(SourceWidth, SourceHeight));
+	const float Scale = MaxSource <= static_cast<float>(MaxImageDimension)
+		? 1.0f
+		: static_cast<float>(MaxImageDimension) / MaxSource;
+
+	CIImage *SourceImage = [CIImage imageWithCVPixelBuffer:Buffer];
+	if (SourceImage == nil)
+	{
+		return 0;
+	}
+
+	CIImage *ScaledImage = SourceImage;
+	if (Scale < 0.999f)
+	{
+		CIFilter *ScaleFilter = [CIFilter filterWithName:@"CILanczosScaleTransform"];
+		if (ScaleFilter != nil)
+		{
+			[ScaleFilter setValue:SourceImage forKey:kCIInputImageKey];
+			[ScaleFilter setValue:@(Scale) forKey:kCIInputScaleKey];
+			[ScaleFilter setValue:@(1.0) forKey:kCIInputAspectRatioKey];
+			ScaledImage = ScaleFilter.outputImage;
+		}
+	}
+
+	if (ScaledImage == nil)
+	{
+		return 0;
+	}
+
+	static CIContext *SharedContext = nil;
+	static dispatch_once_t ContextOnce;
+	dispatch_once(&ContextOnce, ^{
+		SharedContext = [CIContext contextWithOptions:@{kCIContextUseSoftwareRenderer : @NO}];
+	});
+
+	const CGRect Extent = ScaledImage.extent;
+	CGImageRef Image = [SharedContext createCGImage:ScaledImage fromRect:Extent];
+	if (Image == NULL)
+	{
+		return 0;
+	}
+
+	const int Written = SCARVisionPerformCGImageRequest(
+		Image,
+		Orientation,
+		MinConfidence,
+		Output,
+		OutputFloatCount,
+		MaxBodies,
+		MaxJoints);
+
+	CGImageRelease(Image);
+	return Written;
 }
