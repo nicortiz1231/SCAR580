@@ -1,0 +1,415 @@
+{"duration_ms":"94335","share_with_app_devs":0,"roots_installed":0,"bug_type":"202","os_version":"iPhone OS 26.5 (23F77)","slice_uuid":"534E7DBD-EB69-3C36-BC07-A77C16AD0BED","is_first_party":0,"incident_id":"A1726C6C-5112-43D4-89D4-05330F0A10DF","timestamp":"2026-06-19 19:31:39.00 -0400","app_name":"signpost_reporter","name":"signpost_reporter"}
+Date/Time:        2026-06-19 19:30:01.074 -0400
+End time:         2026-06-19 19:31:35.409 -0400
+OS Version:       iPhone OS 26.5 (Build 23F77)
+Architecture:     arm64e
+Report Version:   72
+Incident Identifier: A1726C6C-5112-43D4-89D4-05330F0A10DF
+
+Data Source:      Microstackshots
+Shared Cache:     7B0439F6-A070-3CA7-A5B3-1EFFBAF7FEFF slid base address 0x18eb0c000, slide 0xeb0c000
+
+Command:          signpost_reporter
+Path:             /usr/libexec/signpost_reporter
+Resource Coalition: "com.apple.signpost.signpost_reporter"(1293)
+On Behalf Of:     8 samples UNKNOWN [34] (8 samples originated by UNKNOWN [34])
+Architecture:     arm64e
+Parent:           UNKNOWN [1]
+PID:              58936
+
+Event:            cpu usage
+Action taken:     none
+CPU:              90 seconds cpu time over 94 seconds (95% cpu average), exceeding limit of 50% cpu over 180 seconds
+CPU limit:        90s
+Limit duration:   180s
+CPU used:         90s
+CPU duration:     94s
+Duration:         94.33s
+Duration Sampled: 79.49s (event starts 6.73s before samples, event ends 8.12s after samples)
+Steps:            15 (10 gigacycles/step)
+
+Hardware model:   iPhone14,3
+Active cpus:      6
+Memory size:      5.51 GB
+HW page size:     16384
+VM page size:     16384
+Shared cache residency: 8.97% (534.77 MB / 5959.47 MB)
+
+Time Since Boot:  2056901s
+Time Awake Since Boot: 987657s
+Time Since Wake:  620s
+
+Total CPU Time:   81.576s
+Advisory levels:  Battery -> 3, User -> 3, ThermalPressure -> 0, Combined -> 3
+Free disk space:  27.37 GB/119.09 GB, low space threshold 150 MB
+Vnodes Available: 58.28% (13987/24000, 12000 allocated, 12000 soft limit)
+Models:           none
+
+Preferred User Language: en-US, es-419
+Country Code:     US
+Keyboards:        en_US QWERTY, es_419 QWERTY-Spanish
+OS Cryptex File Extents: 6135
+
+Heaviest stack for the target process:
+  8  ??? (libsystem_pthread.dylib + 2240) [0x1f11e48c0]
+  8  ??? (libsystem_pthread.dylib + 5040) [0x1f11e53b0]
+  8  ??? (libdispatch.dylib + 83628) [0x1cc4266ac]
+  8  ??? (libdispatch.dylib + 85420) [0x1cc426dac]
+  8  ??? (libdispatch.dylib + 43692) [0x1cc41caac]
+  8  ??? (libdispatch.dylib + 40880) [0x1cc41bfb0]
+  8  ??? (libdispatch.dylib + 111076) [0x1cc42d1e4]
+  8  ??? (libdispatch.dylib + 6568) [0x1cc4139a8]
+  8  ??? (LoggingSupport + 33380) [0x242095264]
+  8  ??? (LoggingSupport + 34036) [0x2420954f4]
+  8  ??? (LoggingSupport + 35920) [0x242095c50]
+  8  ??? (LoggingSupport + 41692) [0x2420972dc]
+  8  ??? (LoggingSupport + 76188) [0x24209f99c]
+  8  ??? (LoggingSupport + 77144) [0x24209fd58]
+  7  ??? (LoggingSupport + 76720) [0x24209fbb0]
+  7  ??? (LoggingSupport + 81292) [0x2420a0d8c]
+  7  ??? (SignpostCollection + 24648) [0x27ee19048]
+  4  ??? (SignpostCollection + 23332) [0x27ee18b24]
+  2  ??? (SignpostCollection + 5972) [0x27ee14754]
+  2  ??? (SignpostCollection + 7536) [0x27ee14d70]
+  1  ??? (libobjc.A.dylib + 13496) [0x18eba74b8]
+
+
+Powerstats for:   signpost_reporter [58936]
+UUID:             534E7DBD-EB69-3C36-BC07-A77C16AD0BED
+Path:             /usr/libexec/signpost_reporter
+Resource Coalition: 8 samples "com.apple.signpost.signpost_reporter"(1293)
+On Behalf Of:     8 samples UNKNOWN [34] (8 samples originated by UNKNOWN [34])
+Architecture:     arm64e
+Parent:           UNKNOWN [1]
+UID:              0
+Sudden Term:      Tracked (allows idle exit)
+Footprint:        18.42 MB -> 22.61 MB (+4288 KB)
+Pageins:          602 pages
+Start time:       2026-06-19 19:30:07.803 -0400
+End time:         2026-06-19 19:31:26.866 -0400
+Num samples:      8 (53%)
+Energy:           688.11 uWh
+Num threads:      1
+Primary state:    8 samples Non-Frontmost App, Non-Suppressed, User mode, Effective Thread QoS Background, Requested Thread QoS Background, Override Thread QoS Unspecified, e-core
+User Activity:    8 samples Idle, 0 samples Active
+Power Source:     0 samples on Battery, 8 samples on AC
+  8  ??? (libsystem_pthread.dylib + 2240) [0x1f11e48c0]
+    8  ??? (libsystem_pthread.dylib + 5040) [0x1f11e53b0]
+      8  ??? (libdispatch.dylib + 83628) [0x1cc4266ac]
+        8  ??? (libdispatch.dylib + 85420) [0x1cc426dac]
+          8  ??? (libdispatch.dylib + 43692) [0x1cc41caac]
+            8  ??? (libdispatch.dylib + 40880) [0x1cc41bfb0]
+              8  ??? (libdispatch.dylib + 111076) [0x1cc42d1e4]
+                8  ??? (libdispatch.dylib + 6568) [0x1cc4139a8]
+                  8  ??? (LoggingSupport + 33380) [0x242095264]
+                    8  ??? (LoggingSupport + 34036) [0x2420954f4]
+                      8  ??? (LoggingSupport + 35920) [0x242095c50]
+                        8  ??? (LoggingSupport + 41692) [0x2420972dc]
+                          8  ??? (LoggingSupport + 76188) [0x24209f99c]
+                            8  ??? (LoggingSupport + 77144) [0x24209fd58]
+                              7  ??? (LoggingSupport + 76720) [0x24209fbb0]
+                                7  ??? (LoggingSupport + 81292) [0x2420a0d8c]
+                                  7  ??? (SignpostCollection + 24648) [0x27ee19048]
+                                    4  ??? (SignpostCollection + 23332) [0x27ee18b24]
+                                      2  ??? (SignpostCollection + 5972) [0x27ee14754]
+                                        2  ??? (SignpostCollection + 7536) [0x27ee14d70]
+                                          1  ??? (libobjc.A.dylib + 13496) [0x18eba74b8]
+                                            1  <on behalf of UNKNOWN [34] (originated by UNKNOWN [34])>
+                                          1  ??? (LoggingSupport + 125240) [0x2420ab938]
+                                            1  ??? (CoreFoundation + 36292) [0x191ff9dc4]
+                                              1  <on behalf of UNKNOWN [34] (originated by UNKNOWN [34])>
+                                      1  ??? (SignpostCollection + 5576) [0x27ee145c8]
+                                        1  ??? (LoggingSupport + 8540) [0x24208f15c]
+                                          1  ??? (LoggingSupport + 12700) [0x24209019c]
+                                            1  ??? (LoggingSupport + 210772) [0x2420c0754]
+                                              1  ??? (CoreFoundation + 29180) [0x191ff81fc]
+                                                1  <on behalf of UNKNOWN [34] (originated by UNKNOWN [34])>
+                                      1  ??? (SignpostCollection + 5128) [0x27ee14408]
+                                        1  ??? (CoreFoundation + 8816) [0x191ff3270]
+                                          1  ??? (CoreFoundation + 8524) [0x191ff314c]
+                                            1  ??? (CoreFoundation + 8368) [0x191ff30b0]
+                                              1  ??? (libobjc.A.dylib + 17604) [0x18eba84c4]
+                                                1  <on behalf of UNKNOWN [34] (originated by UNKNOWN [34])>
+                                    3  ??? (SignpostCollection + 23352) [0x27ee18b38]
+                                      3  ??? (SignpostSupport + 18408) [0x2424c37e8]
+                                        2  ??? (SignpostSupport + 8028) [0x2424c0f5c]
+                                          2  ??? (SignpostSupport + 123540) [0x2424dd294]
+                                            2  ??? (SignpostSupport + 9328) [0x2424c1470]
+                                              1  ??? (SignpostSupport + 123772) [0x2424dd37c]
+                                                1  ??? (libobjc.A.dylib + 13312) [0x18eba7400]
+                                                  1  <on behalf of UNKNOWN [34] (originated by UNKNOWN [34])>
+                                              1  ??? (SignpostSupport + 123680) [0x2424dd320]
+                                                1  ??? (SignpostSupport + 8584) [0x2424c1188]
+                                                  1  ??? (SignpostSupport + 19720) [0x2424c3d08]
+                                                    1  ??? (Foundation + 18180) [0x18f287704]
+                                                      1  ??? (CoreFoundation + 104776) [0x19200a948]
+                                                        1  ??? (CoreFoundation + 104520) [0x19200a848]
+                                                          1  ??? (CoreFoundation + 43292) [0x191ffb91c]
+                                                            1  <on behalf of UNKNOWN [34] (originated by UNKNOWN [34])>
+                                        1  ??? (SignpostSupport + 7992) [0x2424c0f38]
+                                          1  ??? (SignpostSupport + 5992) [0x2424c0768]
+                                            1  ??? (libobjc.A.dylib + 42744) [0x18ebae6f8]
+                                              1  <on behalf of UNKNOWN [34] (originated by UNKNOWN [34])>
+                              1  ??? (LoggingSupport + 76428) [0x24209fa8c]
+                                1  ??? (LoggingSupport + 77316) [0x24209fe04]
+                                  1  ??? (CoreFoundation + 30324) [0x191ff8674]
+                                    1  ??? (libsystem_platform.dylib + 3328) [0x2b285ad00]
+                                      1  <on behalf of UNKNOWN [34] (originated by UNKNOWN [34])>
+
+  Binary Images:
+           0x10097c000 -                ???  signpost_reporter        <534E7DBD-EB69-3C36-BC07-A77C16AD0BED>  /usr/libexec/signpost_reporter
+           0x18eba4000 -        0x18ebf547f  libobjc.A.dylib          <0AB507CF-CB12-3CCD-9967-9AAC912AF8E1>  /usr/lib/libobjc.A.dylib
+           0x18f283000 -        0x19010b6df  Foundation               <2F9C66E8-7A0E-379E-8608-F42EF19F0C33>  /System/Library/Frameworks/Foundation.framework/Foundation
+           0x191ff1000 -        0x19258d79f  CoreFoundation           <FE9658B2-9DE6-3FA5-907B-0B3A3BCBB0B7>  /System/Library/Frameworks/CoreFoundation.framework/CoreFoundation
+           0x1cc412000 -        0x1cc4585ff  libdispatch.dylib        <E1A24FA0-2160-3366-AE7E-420F0FA3C5BC>  /usr/lib/system/libdispatch.dylib
+           0x1f11e4000 -        0x1f11f04ef  libsystem_pthread.dylib  <9E89E20F-CF2D-31A9-A23F-158EB5A0AFFE>  /usr/lib/system/libsystem_pthread.dylib
+           0x24208d000 -        0x24211653f  LoggingSupport           <4E7B8908-90DB-3A87-B833-9C82A122ED13>  /System/Library/PrivateFrameworks/LoggingSupport.framework/LoggingSupport
+           0x2424bf000 -        0x24254739f  SignpostSupport          <C0500EBD-18F3-34F7-A649-19055BB978FE>  /System/Library/PrivateFrameworks/SignpostSupport.framework/SignpostSupport
+           0x27ee13000 -        0x27ee205ff  SignpostCollection       <679DD738-44B1-360E-A5D3-F5231DD176BD>  /System/Library/PrivateFrameworks/SignpostCollection.framework/SignpostCollection
+           0x2b285a000 -        0x2b2862433  libsystem_platform.dylib <BDCDC3C3-CFAC-3030-958F-49047F12C464>  /usr/lib/system/libsystem_platform.dylib
+
+
+Powerstats for:   backupd
+UUID:             0A0C4817-9C2F-3369-8DD1-C266F54C999D
+Path:             /System/Library/PrivateFrameworks/MobileBackup.framework/backupd
+Resource Coalition: 3 samples "com.apple.backupd"(491)
+On Behalf Of:     3 samples backupd [58913] (3 samples originated by backupd [58913])
+Architecture:     arm64e
+Start time:       2026-06-19 19:30:10.243 -0400
+End time:         2026-06-19 19:30:16.234 -0400
+Num samples:      3 (20%)
+Energy:           37.39 uWh
+Primary state:    2 samples Non-Frontmost App, Non-Suppressed, User mode, Effective Thread QoS Background, Requested Thread QoS Utility, Override Thread QoS Unspecified, e-core
+User Activity:    3 samples Idle, 0 samples Active
+Power Source:     0 samples on Battery, 3 samples on AC
+  3  ??? (libsystem_pthread.dylib + 2240) [0x1f11e48c0]
+    3  ??? (libsystem_pthread.dylib + 4980) [0x1f11e5374]
+      3  ??? (libdispatch.dylib + 82072) [0x1cc426098]
+        3  ??? (libdispatch.dylib + 80476) [0x1cc425a5c]
+          3  ??? (libdispatch.dylib + 231356) [0x1cc44a7bc]
+            3  ??? (libdispatch.dylib + 111076) [0x1cc42d1e4]
+              3  ??? (libdispatch.dylib + 6568) [0x1cc4139a8]
+                3  ??? (backupd + 773120) [0x100864c00]
+                  3  ??? (backupd + 524772) [0x1008281e4]
+                    3  ??? (backupd + 441208) [0x100813b78]
+                      3  ??? (backupd + 445688) [0x100814cf8]
+                        3  ??? (backupd + 445688) [0x100814cf8]
+                          3  ??? (backupd + 445688) [0x100814cf8]
+                            3  ??? (backupd + 445688) [0x100814cf8]
+                              3  ??? (backupd + 445652) [0x100814cd4]
+                                3  ??? (backupd + 443528) [0x100814488]
+                                  3  ??? (backupd + 550852) [0x10082e7c4]
+                                    3  ??? (backupd + 460376) [0x100818658]
+                                      3  ??? (backupd + 1869812) [0x1009707f4]
+                                        3  ??? (backupd + 1870784) [0x100970bc0]
+                                          3  ??? (backupd + 1871792) [0x100970fb0]
+                                            3  ??? (backupd + 1745156) [0x100952104]
+                                              3  ??? (backupd + 1747704) [0x100952af8]
+                                                3  ??? (backupd + 1755568) [0x1009549b0]
+                                                  3  ??? (backupd + 1755856) [0x100954ad0]
+                                                    2  ??? (backupd + 1757220) [0x100955024]
+                                                      1  ??? (backupd + 1759620) [0x100955984]
+                                                        1  ??? (backupd + 1767492) [0x100957844]
+                                                          1  ??? (backupd + 1873968) [0x100971830]
+                                                            1  ??? (backupd + 1883276) [0x100973c8c]
+                                                              1  ??? (backupd + 2124120) [0x1009ae958]
+                                                                1  ??? (backupd + 2013988) [0x100993b24]
+                                                                  1  ??? (libprequelite.dylib + 12284) [0x2b2270ffc]
+                                                                    1  ??? (backupd + 2014176) [0x100993be0]
+                                                                      1  ??? (backupd + 2124368) [0x1009aea50]
+                                                                        1  ??? (backupd + 2010428) [0x100992d3c]
+                                                                          1  ??? (libprequelite.dylib + 25516) [0x2b22743ac]
+                                                                            1  ??? (libprequelite.dylib + 16724) [0x2b2272154]
+                                                                              1  ??? (libprequelite.dylib + 14028) [0x2b22716cc]
+                                                                                1  ??? (libprequelite.dylib + 15124) [0x2b2271b14]
+                                                                                  1  ??? (libprequelite.dylib + 17424) [0x2b2272410]
+                                                                                    1  ??? (libprequelite.dylib + 8548) [0x2b2270164]
+                                                                                      1  ??? (libprequelite.dylib + 25708) [0x2b227446c]
+                                                                                        1  ??? (Foundation + 219176) [0x18f2b8828]
+                                                                                          1  ??? (Foundation + 181044) [0x18f2af334]
+                                                                                            1  ??? (Foundation + 320148) [0x18f2d1294]
+                                                                                              1  ??? (Foundation + 218352) [0x18f2b84f0]
+                                                                                                1  ??? (Foundation + 197956) [0x18f2b3544]
+                                                                                                  1  ??? (libobjc.A.dylib + 47452) [0x18ebaf95c]
+                                                                                                    1  ??? (libobjc.A.dylib + 45104) [0x18ebaf030]
+                                                                                                      1  ??? (libobjc.A.dylib + 44368) [0x18ebaed50]
+                                                                                                        1  ??? (libobjc.A.dylib + 46708) [0x18ebaf674]
+                                                                                                          1  <on behalf of backupd [58913] (originated by backupd [58913])>
+                                                      1  ??? (backupd + 1759124) [0x100955794]
+                                                        1  ??? (backupd + 412452) [0x10080cb24]
+                                                          1  ??? (backupd + 1760924) [0x100955e9c]
+                                                            1  ??? (backupd + 1750452) [0x1009535b4]
+                                                              1  ??? (Foundation + 92524) [0x18f29996c]
+                                                                1  ??? (Foundation + 54204) [0x18f2903bc]
+                                                                  1  ??? (Foundation + 103176) [0x18f29c308]
+                                                                    1  ??? (Foundation + 109816) [0x18f29dcf8]
+                                                                      1  <on behalf of backupd [58913] (originated by backupd [58913])>
+                                                    1  ??? (backupd + 1757152) [0x100954fe0]
+                                                      1  ??? (libsystem_kernel.dylib + 26772) [0x240d9a894]
+                                                        1  <on behalf of backupd [58913] (originated by backupd [58913]), Kernel mode>
+
+  Binary Images:
+           0x1007a8000 -                ???  backupd                 <0A0C4817-9C2F-3369-8DD1-C266F54C999D>  /System/Library/PrivateFrameworks/MobileBackup.framework/backupd
+           0x18eba4000 -        0x18ebf547f  libobjc.A.dylib         <0AB507CF-CB12-3CCD-9967-9AAC912AF8E1>  /usr/lib/libobjc.A.dylib
+           0x18f283000 -        0x19010b6df  Foundation              <2F9C66E8-7A0E-379E-8608-F42EF19F0C33>  /System/Library/Frameworks/Foundation.framework/Foundation
+           0x1cc412000 -        0x1cc4585ff  libdispatch.dylib       <E1A24FA0-2160-3366-AE7E-420F0FA3C5BC>  /usr/lib/system/libdispatch.dylib
+           0x1f11e4000 -        0x1f11f04ef  libsystem_pthread.dylib <9E89E20F-CF2D-31A9-A23F-158EB5A0AFFE>  /usr/lib/system/libsystem_pthread.dylib
+           0x240d94000 -        0x240dcfae7  libsystem_kernel.dylib  <EB06421E-7AA8-303F-AAAB-B7501B063F9D>  /usr/lib/system/libsystem_kernel.dylib
+           0x2b226e000 -        0x2b22831bf  libprequelite.dylib     <DD962A6D-0398-396E-AD61-AC41FB65E4C7>  /usr/lib/libprequelite.dylib
+
+
+Powerstats for:   adid
+UUID:             B6D6844F-6605-37A5-B75F-15D6EF2684A2
+Path:             /usr/libexec/adid
+Resource Coalition: 1 sample "com.apple.adid"(637)
+On Behalf Of:     1 sample UNKNOWN [44779] (1 sample originated by backupd [58913])
+Architecture:     arm64e
+Start time:       2026-06-19 19:31:15.330 -0400
+End time:         2026-06-19 19:31:15.330 -0400
+Num samples:      1 (7%)
+Primary state:    1 samples Non-Frontmost App, Non-Suppressed, Kernel mode, Effective Thread QoS Background, Requested Thread QoS User Initiated, Override Thread QoS Unspecified, e-core
+User Activity:    1 samples Idle, 0 samples Active
+Power Source:     0 samples on Battery, 1 samples on AC
+  1  ??? (dyld + 19484) [0x18ec2dc1c]
+    1  ??? (adid + 827600) [0x104b160d0]
+      1  ??? (CoreFoundation + 912740) [0x1920cfd64]
+        1  ??? (CoreFoundation + 189772) [0x19201f54c]
+          1  ??? (CoreFoundation + 194052) [0x192020604]
+            1  ??? (CoreFoundation + 663600) [0x192093030]
+              1  ??? (libdispatch.dylib + 67748) [0x1cc4228a4]
+                1  ??? (libdispatch.dylib + 67940) [0x1cc422964]
+                  1  ??? (libdispatch.dylib + 232756) [0x1cc44ad34]
+                    1  ??? (libdispatch.dylib + 125176) [0x1cc4308f8]
+                      1  ??? (libdispatch.dylib + 40472) [0x1cc41be18]
+                        1  ??? (libdispatch.dylib + 121764) [0x1cc42fba4]
+                          1  ??? (libdispatch.dylib + 111148) [0x1cc42d22c]
+                            1  ??? (libxpc.dylib + 84548) [0x1a6a3ca44]
+                              1  ??? (libxpc.dylib + 77008) [0x1a6a3acd0]
+                                1  ??? (adid + 800388) [0x104b0f684]
+                                  1  ??? (adid + 771252) [0x104b084b4]
+                                    1  ??? (adid + 1638276) [0x104bdbf84]
+                                      1  ??? (adid + 2355320) [0x104c8b078]
+                                        1  <on behalf of UNKNOWN [44779] (originated by backupd [58913])>
+
+  Binary Images:
+           0x104a4c000 -                ???  adid              <B6D6844F-6605-37A5-B75F-15D6EF2684A2>  /usr/libexec/adid
+           0x18ec29000 -        0x18ecce17f  dyld              <41DE795B-9283-37FD-917E-D674BB73F541>  /usr/lib/dyld
+           0x191ff1000 -        0x19258d79f  CoreFoundation    <FE9658B2-9DE6-3FA5-907B-0B3A3BCBB0B7>  /System/Library/Frameworks/CoreFoundation.framework/CoreFoundation
+           0x1a6a28000 -        0x1a6a7965f  libxpc.dylib      <BC1854CC-DFE1-3F26-B056-950ED9D32E10>  /usr/lib/system/libxpc.dylib
+           0x1cc412000 -        0x1cc4585ff  libdispatch.dylib <E1A24FA0-2160-3366-AE7E-420F0FA3C5BC>  /usr/lib/system/libdispatch.dylib
+
+
+Powerstats for:   batteryintelligenced
+UUID:             7D5B84E0-6F7D-3BD3-ACF6-1EF31B593BB6
+Path:             /usr/libexec/batteryintelligenced
+Resource Coalition: 1 sample "com.apple.batteryintelligenced"(197)
+Architecture:     arm64e
+Start time:       2026-06-19 19:31:27.291 -0400
+End time:         2026-06-19 19:31:27.291 -0400
+Num samples:      1 (7%)
+Primary state:    1 samples Non-Frontmost App, Non-Suppressed, Kernel mode, Effective Thread QoS Background, Requested Thread QoS User Interactive, Override Thread QoS Unspecified, e-core
+User Activity:    1 samples Idle, 0 samples Active
+Power Source:     0 samples on Battery, 1 samples on AC
+  1  ??? (libsystem_pthread.dylib + 2232) [0x1f11e48b8]
+
+  Binary Images:
+           0x102978000 -                ???  batteryintelligenced    <7D5B84E0-6F7D-3BD3-ACF6-1EF31B593BB6>  /usr/libexec/batteryintelligenced
+           0x1f11e4000 -        0x1f11f04ef  libsystem_pthread.dylib <9E89E20F-CF2D-31A9-A23F-158EB5A0AFFE>  /usr/lib/system/libsystem_pthread.dylib
+
+
+Powerstats for:   logd
+UUID:             DFC231EE-5761-3327-91F8-14D1D00C6D3F
+Path:             /usr/libexec/logd
+Resource Coalition: 1 sample "com.apple.logd"(7)
+On Behalf Of:     1 sample UNKNOWN [58723] (1 sample originated by UNKNOWN [34])
+Architecture:     arm64e
+Start time:       2026-06-19 19:30:28.435 -0400
+End time:         2026-06-19 19:30:28.435 -0400
+Num samples:      1 (7%)
+Primary state:    1 samples Non-Frontmost App, Non-Suppressed, Kernel mode, Effective Thread QoS Background, Requested Thread QoS Background, Override Thread QoS Unspecified, e-core
+User Activity:    1 samples Idle, 0 samples Active
+Power Source:     0 samples on Battery, 1 samples on AC
+  1  ??? (libsystem_pthread.dylib + 2240) [0x1f11e48c0]
+    1  ??? (libsystem_pthread.dylib + 5040) [0x1f11e53b0]
+      1  ??? (libdispatch.dylib + 83628) [0x1cc4266ac]
+        1  ??? (libdispatch.dylib + 85420) [0x1cc426dac]
+          1  ??? (libdispatch.dylib + 43748) [0x1cc41cae4]
+            1  ??? (libdispatch.dylib + 40880) [0x1cc41bfb0]
+              1  ??? (libdispatch.dylib + 111076) [0x1cc42d1e4]
+                1  ??? (libdispatch.dylib + 69252) [0x1cc422e84]
+                  1  ??? (CacheDelete + 211048) [0x1cb570868]
+                    1  ??? (logd + 131180) [0x10419c06c]
+                      1  ??? (logd + 109760) [0x104196cc0]
+                        1  ??? (logd + 112320) [0x1041976c0]
+                          1  <on behalf of UNKNOWN [58723] (originated by UNKNOWN [34])>
+
+  Binary Images:
+           0x10417c000 -                ???  logd                    <DFC231EE-5761-3327-91F8-14D1D00C6D3F>  /usr/libexec/logd
+           0x1cb53d000 -        0x1cb58a11f  CacheDelete             <6D9FA18D-1953-3590-9813-17C17EBF0305>  /System/Library/PrivateFrameworks/CacheDelete.framework/CacheDelete
+           0x1cc412000 -        0x1cc4585ff  libdispatch.dylib       <E1A24FA0-2160-3366-AE7E-420F0FA3C5BC>  /usr/lib/system/libdispatch.dylib
+           0x1f11e4000 -        0x1f11f04ef  libsystem_pthread.dylib <9E89E20F-CF2D-31A9-A23F-158EB5A0AFFE>  /usr/lib/system/libsystem_pthread.dylib
+
+
+Powerstats for:   ReportCrash
+UUID:             D6195501-3347-3A63-82A7-9E344AA41FFD
+Path:             /System/Library/CoreServices/ReportCrash
+Resource Coalition: 1 sample "com.apple.ReportCrash"(361)
+On Behalf Of:     1 sample UNKNOWN [56451] (1 sample originated by UNKNOWN [56451])
+Architecture:     arm64e
+Start time:       2026-06-19 19:30:28.403 -0400
+End time:         2026-06-19 19:30:28.403 -0400
+Num samples:      1 (7%)
+Primary state:    1 samples Non-Frontmost App, Non-Suppressed, User mode, Effective Thread QoS Default, Requested Thread QoS Default, Override Thread QoS Unspecified, e-core
+User Activity:    1 samples Idle, 0 samples Active
+Power Source:     0 samples on Battery, 1 samples on AC
+  1  ??? (libsystem_pthread.dylib + 2252) [0x1f11e48cc]
+    1  ??? (libsystem_pthread.dylib + 17464) [0x1f11e8438]
+      1  ??? (ReportCrash + 11336) [0x10098ac48]
+        1  ??? (libsystem_kernel.dylib + 18080) [0x240d986a0]
+          1  ??? (ReportCrash + 8488) [0x10098a128]
+            1  ??? (ReportCrash + 159068) [0x1009aed5c]
+              1  ??? (ReportCrash + 15452) [0x10098bc5c]
+                1  ??? (ReportCrash + 10320) [0x10098a850]
+                  1  ??? (ReportCrash + 58640) [0x100996510]
+                    1  ??? (ReportCrash + 60760) [0x100996d58]
+                      1  ??? (ReportCrash + 60984) [0x100996e38]
+                        1  ??? (ReportCrash + 42096) [0x100992470]
+                          1  ??? (ReportCrash + 127276) [0x1009a712c]
+                            1  ??? (ReportCrash + 124656) [0x1009a66f0]
+                              1  ??? (Symbolication + 34536) [0x1d78706e8]
+                                1  ??? (Symbolication + 34428) [0x1d787067c]
+                                  1  ??? (Symbolication + 37868) [0x1d78713ec]
+                                    1  ??? (Symbolication + 12208) [0x1d786afb0]
+                                      1  ??? (Symbolication + 732456) [0x1d791ad28]
+                                        1  ??? (Symbolication + 730176) [0x1d791a440]
+                                          1  ??? (Symbolication + 37596) [0x1d78712dc]
+                                            1  ??? (CoreSymbolication + 653164) [0x1eb20876c]
+                                              1  ??? (CoreSymbolication + 965888) [0x1eb254d00]
+                                                1  ??? (CoreSymbolication + 965176) [0x1eb254a38]
+                                                  1  ??? (CoreSymbolication + 966220) [0x1eb254e4c]
+                                                    1  ??? (Dyld + 18144) [0x1be9756e0]
+                                                      1  ??? (Dyld + 18908) [0x1be9759dc]
+                                                        1  ??? (Dyld + 15484) [0x1be974c7c]
+                                                          1  ??? (Dyld + 283232) [0x1be9b6260]
+                                                            1  ??? (Dyld + 13896) [0x1be974648]
+                                                              1  ??? (Dyld + 65356) [0x1be980f4c]
+                                                                1  ??? (libswiftCore.dylib + 349156) [0x18ed3f3e4]
+                                                                  1  ??? (libswiftCore.dylib + 28912) [0x18ecf10f0]
+                                                                    1  ??? (Dyld + 11508) [0x1be973cf4]
+                                                                      1  ??? (libswiftCore.dylib + 33868) [0x18ecf244c]
+                                                                        1  ??? (libswiftCore.dylib + 28912) [0x18ecf10f0]
+                                                                          1  ??? (libswiftCore.dylib + 35124) [0x18ecf2934]
+                                                                            1  ??? (libswiftCore.dylib + 32472) [0x18ecf1ed8]
+                                                                              1  ??? (libswiftCore.dylib + 33868) [0x18ecf244c]
+                                                                                1  ??? (libswiftCore.dylib + 28912) [0x18ecf10f0]
+                                                                                  1  ??? (libswiftCore.dylib + 605276) [0x18ed7dc5c]
+                                                                                    1  <on behalf of UNKNOWN [56451] (originated by UNKNOWN [56451])>
+
+  Binary Images:
+           0x100988000 -                ???  ReportCrash             <D6195501-3347-3A63-82A7-9E344AA41FFD>  /System/Library/CoreServices/ReportCrash
+           0x18ecea000 -        0x18f28283f  libswiftCore.dylib      <ABAF3ABC-A416-33B7-A864-BB8F17049044>  /usr/lib/swift/libswiftCore.dylib
+           0x1be971000 -        0x1be9d5adf  Dyld                    <436FB1AB-DBD3-332D-98D2-69C20028C354>  /System/Library/PrivateFrameworks/Dyld.framework/Dyld
+           0x1d7868000 -        0x1d7968c9f  Symbolication           <169D24BF-ED70-3173-91EA-FCE508344C7F>  /System/Library/PrivateFrameworks/Symbolication.framework/Symbolication
+           0x1eb169000 -        0x1eb2bfedf  CoreSymbolication       <19CE5892-3442-3E21-9459-3F28DF0695CA>  /System/Library/PrivateFrameworks/CoreSymbolication.framework/CoreSymbolication
+           0x1f11e4000 -        0x1f11f04ef  libsystem_pthread.dylib <9E89E20F-CF2D-31A9-A23F-158EB5A0AFFE>  /usr/lib/system/libsystem_pthread.dylib
+           0x240d94000 -        0x240dcfae7  libsystem_kernel.dylib  <EB06421E-7AA8-303F-AAAB-B7501B063F9D>  /usr/lib/system/libsystem_kernel.dylib
