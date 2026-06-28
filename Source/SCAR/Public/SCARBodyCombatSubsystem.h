@@ -25,22 +25,26 @@ public:
 	FSCARBodyCombatHitDelegate OnBodyHit;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Thresholds")
-	float MaxBoneDistanceNormalized = 0.048f;
+	float MaxBoneDistanceNormalized = 0.08f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Thresholds")
-	float BoundsPaddingNormalized = 0.012f;
+	float BoundsPaddingNormalized = 0.03f;
+
+	/** Expands the detected body bounding box by this fraction of its width/height on each side. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Thresholds", meta = (ClampMin = "0.0", ClampMax = "0.5"))
+	float BodyHitBoundsExpandFraction = 0.2f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Thresholds")
-	float HeadRegionScale = 0.18f;
+	float HeadRegionScale = 0.5f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Thresholds")
-	float TorsoRegionScale = 0.66f;
+	float TorsoRegionScale = 1.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Thresholds")
-	float LegRegionScale = 0.4f;
+	float LegRegionScale = 0.7f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Thresholds")
-	float MaxTargetAgeSeconds = 0.35f;
+	float MaxTargetAgeSeconds = 0.75f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Damage")
 	float MaxHealth = 100.f;
@@ -57,12 +61,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Feedback")
 	bool bUseBodycamHudHitMarker = false;
 
-	/** Plays Bodycam HitmarkerEffect once per blink; skipped while marker is already visible. */
+	/** Plays Bodycam HitmarkerEffect on every confirmed body hit. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Feedback")
 	bool bPlayHudHitMarkerBlink = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Feedback")
-	bool bPlayHitSound = true;
+	bool bPlayHitSound = false;
 
 	/** Minimum time between hit-confirm sounds to avoid iOS audio voice buildup. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Feedback", meta = (ClampMin = "0.0"))
@@ -71,8 +75,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Feedback")
 	bool bSpawnBloodEffect = true;
 
+	/** Minimum time between blood VFX replays on the pooled feedback actor. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Feedback", meta = (ClampMin = "0.0"))
+	float MinBloodEffectIntervalSeconds = 0.12f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Feedback")
-	float HitMarkerVisibleSeconds = 0.08f;
+	float HitMarkerVisibleSeconds = 0.12f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Pose2D")
 	bool bFlipPose2DY = true;
@@ -156,6 +164,7 @@ private:
 	void OnCanvasOverlayDraw(UCanvas* Canvas, APlayerController* PlayerController);
 	void SyncCanvasOverlayDrawRegistration();
 	void FlushDeferredVisionShot();
+	bool TryGetTrackedHitViewport01Lightweight(FVector2D& OutViewport01) const;
 
 	UPROPERTY()
 	TObjectPtr<UTexture2D> HitMarkerTexture;
@@ -173,8 +182,9 @@ private:
 	mutable TWeakObjectPtr<UImage> CachedHudHitMarkerImage;
 	mutable TWeakObjectPtr<const APawn> CachedHudPawn;
 	double LastHitSoundPlaySeconds = -1.0;
-	double LastHudBlinkPlaySeconds = -1.0;
+	double LastBloodEffectPlaySeconds = -1.0;
 	bool bUseCanvasHitMarkerFallback = false;
+	bool bForceMarkerLayoutUpdate = false;
 	FDelegateHandle CanvasOverlayDrawHandle;
 	FVector2D LastAppliedMarkerViewport01 = FVector2D(-1.f, -1.f);
 	float LastAppliedMarkerSizePx = -1.f;

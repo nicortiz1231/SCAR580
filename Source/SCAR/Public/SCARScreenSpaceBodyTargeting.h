@@ -32,11 +32,8 @@ namespace SCARScreenSpaceBodyTargeting
 	bool TryGetBestTarget(
 		const TArray<FSCARScreenSpaceAimSample>& Targets,
 		const FVector2D& AimViewport01,
-		float MaxBoneDistanceNormalized,
 		float BoundsPaddingNormalized,
-		float HeadRegionScale,
-		float TorsoRegionScale,
-		float LegRegionScale,
+		float BodyHitBoundsExpandFraction,
 		float MaxTargetAgeSeconds,
 		double NowSeconds,
 		int32& OutTargetIndex,

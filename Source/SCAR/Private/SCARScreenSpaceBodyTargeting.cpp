@@ -8,6 +8,38 @@
 
 namespace SCARScreenSpaceBodyTargeting
 {
+	static bool AccumulateRegionBounds(
+		const FSCARScreenSpaceAimSample& Sample,
+		const TArray<int32>& JointIndices,
+		FVector2D& OutMin,
+		FVector2D& OutMax)
+	{
+		bool bFoundAny = false;
+		for (const int32 Index : JointIndices)
+		{
+			if (!Sample.JointValid.IsValidIndex(Index) || !Sample.JointValid[Index])
+			{
+				continue;
+			}
+
+			const FVector2D& Point = Sample.JointViewport01[Index];
+			if (!bFoundAny)
+			{
+				OutMin = Point;
+				OutMax = Point;
+				bFoundAny = true;
+				continue;
+			}
+
+			OutMin.X = FMath::Min(OutMin.X, Point.X);
+			OutMin.Y = FMath::Min(OutMin.Y, Point.Y);
+			OutMax.X = FMath::Max(OutMax.X, Point.X);
+			OutMax.Y = FMath::Max(OutMax.Y, Point.Y);
+		}
+
+		return bFoundAny;
+	}
+
 	namespace
 	{
 		constexpr int32 VisionJointCount = static_cast<int32>(ESCARVisionBodyJoint::Count);
@@ -136,6 +168,105 @@ namespace SCARScreenSpaceBodyTargeting
 			return FMath::Clamp(TorsoRegionScale, 0.1f, 1.f);
 		}
 
+		float GetNormalizedBodyY(const FVector4& Bounds, const FVector2D& AimViewport01)
+		{
+			return FMath::GetMappedRangeValueClamped(
+				FVector2D(Bounds.Y, Bounds.W),
+				FVector2D(0.f, 1.f),
+				AimViewport01.Y);
+		}
+
+		ESCARBodyHitRegion GetHitRegionFromNormalizedBodyY(const float NormalizedBodyY)
+		{
+			if (NormalizedBodyY <= 0.32f)
+			{
+				return ESCARBodyHitRegion::Head;
+			}
+
+			if (NormalizedBodyY >= 0.74f)
+			{
+				return ESCARBodyHitRegion::Legs;
+			}
+
+			return ESCARBodyHitRegion::Torso;
+		}
+
+		void GetRegionJointIndices(const ESCARBodyHitRegion HitRegion, TArray<int32>& OutJointIndices)
+		{
+			OutJointIndices.Reset();
+			switch (HitRegion)
+			{
+			case ESCARBodyHitRegion::Head:
+				OutJointIndices = {
+					static_cast<int32>(ESCARVisionBodyJoint::Nose),
+					static_cast<int32>(ESCARVisionBodyJoint::LeftEye),
+					static_cast<int32>(ESCARVisionBodyJoint::RightEye),
+					static_cast<int32>(ESCARVisionBodyJoint::LeftEar),
+					static_cast<int32>(ESCARVisionBodyJoint::RightEar),
+					static_cast<int32>(ESCARVisionBodyJoint::Neck),
+				};
+				break;
+			case ESCARBodyHitRegion::Legs:
+				OutJointIndices = {
+					static_cast<int32>(ESCARVisionBodyJoint::LeftHip),
+					static_cast<int32>(ESCARVisionBodyJoint::RightHip),
+					static_cast<int32>(ESCARVisionBodyJoint::LeftKnee),
+					static_cast<int32>(ESCARVisionBodyJoint::RightKnee),
+					static_cast<int32>(ESCARVisionBodyJoint::LeftAnkle),
+					static_cast<int32>(ESCARVisionBodyJoint::RightAnkle),
+				};
+				break;
+			default:
+				OutJointIndices = {
+					static_cast<int32>(ESCARVisionBodyJoint::Neck),
+					static_cast<int32>(ESCARVisionBodyJoint::LeftShoulder),
+					static_cast<int32>(ESCARVisionBodyJoint::RightShoulder),
+					static_cast<int32>(ESCARVisionBodyJoint::LeftElbow),
+					static_cast<int32>(ESCARVisionBodyJoint::RightElbow),
+					static_cast<int32>(ESCARVisionBodyJoint::Root),
+					static_cast<int32>(ESCARVisionBodyJoint::LeftHip),
+					static_cast<int32>(ESCARVisionBodyJoint::RightHip),
+				};
+				break;
+			}
+		}
+
+		bool ComputeExpandedBodyHitBounds(
+			const FVector4& BodyBounds,
+			const float BoundsPadding,
+			const float ExpandFraction,
+			FVector4& OutHitBounds)
+		{
+			const float BodyWidth = FMath::Max(BodyBounds.Z - BodyBounds.X, KINDA_SMALL_NUMBER);
+			const float BodyHeight = FMath::Max(BodyBounds.W - BodyBounds.Y, KINDA_SMALL_NUMBER);
+			const float ExpandX = FMath::Max(BoundsPadding, BodyWidth * ExpandFraction);
+			const float ExpandY = FMath::Max(BoundsPadding, BodyHeight * ExpandFraction);
+			OutHitBounds = FVector4(
+				BodyBounds.X - ExpandX,
+				BodyBounds.Y - ExpandY,
+				BodyBounds.Z + ExpandX,
+				BodyBounds.W + ExpandY);
+			return OutHitBounds.Z > OutHitBounds.X && OutHitBounds.W > OutHitBounds.Y;
+		}
+
+		bool IsAimInsideBodyHitBounds(
+			const FSCARScreenSpaceAimSample& Sample,
+			const FVector2D& AimViewport01,
+			const float BoundsPadding,
+			const float ExpandFraction)
+		{
+			FVector4 HitBounds;
+			if (!ComputeExpandedBodyHitBounds(Sample.BoundsViewport01, BoundsPadding, ExpandFraction, HitBounds))
+			{
+				return false;
+			}
+
+			return AimViewport01.X >= HitBounds.X
+				&& AimViewport01.X <= HitBounds.Z
+				&& AimViewport01.Y >= HitBounds.Y
+				&& AimViewport01.Y <= HitBounds.W;
+		}
+
 		bool IsHeadshotAim(const FSCARScreenSpaceAimSample& Sample, const FVector2D& AimViewport01, float Threshold)
 		{
 			for (int32 Index = 0; Index <= static_cast<int32>(ESCARVisionBodyJoint::RightEar); ++Index)
@@ -159,78 +290,49 @@ namespace SCARScreenSpaceBodyTargeting
 			return AimViewport01.Y <= ShoulderY - 0.02f;
 		}
 
+		bool ClassifyHeadshotOnSample(
+			const FSCARScreenSpaceAimSample& Sample,
+			const FVector2D& AimViewport01)
+		{
+			const float NormalizedBodyY = GetNormalizedBodyY(Sample.BoundsViewport01, AimViewport01);
+			if (NormalizedBodyY <= 0.32f)
+			{
+				return true;
+			}
+
+			const float BodyWidth = FMath::Max(
+				Sample.BoundsViewport01.Z - Sample.BoundsViewport01.X,
+				KINDA_SMALL_NUMBER);
+			return IsHeadshotAim(Sample, AimViewport01, FMath::Max(BodyWidth * 0.35f, 0.03f));
+		}
+
+		float ComputeAimDistanceToBodyCenter(
+			const FSCARScreenSpaceAimSample& Sample,
+			const FVector2D& AimViewport01)
+		{
+			const FVector4& Bounds = Sample.BoundsViewport01;
+			const FVector2D Center((Bounds.X + Bounds.Z) * 0.5f, (Bounds.Y + Bounds.W) * 0.5f);
+			return FVector2D::Distance(AimViewport01, Center);
+		}
+
 		bool TryGetAimDistanceOnSample(
 			const FSCARScreenSpaceAimSample& Sample,
 			const FVector2D& AimViewport01,
-			float MaxBoneDistance,
-			float BoundsPadding,
-			float HeadRegionScale,
-			float TorsoRegionScale,
-			float LegRegionScale,
+			const float BoundsPadding,
+			const float ExpandFraction,
 			float& OutBestDistance,
 			bool& bOutIsHeadshot)
 		{
 			OutBestDistance = MAX_FLT;
 			bOutIsHeadshot = false;
 
-			if (Sample.JointViewport01.Num() == 0)
+			if (!IsAimInsideBodyHitBounds(Sample, AimViewport01, BoundsPadding, ExpandFraction))
 			{
 				return false;
 			}
 
-			const FVector4 PaddedBounds(
-				Sample.BoundsViewport01.X - BoundsPadding,
-				Sample.BoundsViewport01.Y - BoundsPadding,
-				Sample.BoundsViewport01.Z + BoundsPadding,
-				Sample.BoundsViewport01.W + BoundsPadding);
-
-			if (AimViewport01.X < PaddedBounds.X
-				|| AimViewport01.X > PaddedBounds.Z
-				|| AimViewport01.Y < PaddedBounds.Y
-				|| AimViewport01.Y > PaddedBounds.W)
-			{
-				return false;
-			}
-
-			for (int32 Index = 0; Index < Sample.JointViewport01.Num(); ++Index)
-			{
-				if (!IsJointValid(Sample, Index))
-				{
-					continue;
-				}
-
-				OutBestDistance = FMath::Min(OutBestDistance, FVector2D::Distance(AimViewport01, Sample.JointViewport01[Index]));
-			}
-
-			for (int32 Index = 0; Index < VisionJointCount; ++Index)
-			{
-				const int32 ParentIndex = ParentIndices[Index];
-				if (ParentIndex < 0 || !IsJointValid(Sample, Index) || !IsJointValid(Sample, ParentIndex))
-				{
-					continue;
-				}
-
-				OutBestDistance = FMath::Min(
-					OutBestDistance,
-					DistancePointToSegment(
-						AimViewport01,
-						Sample.JointViewport01[Index],
-						Sample.JointViewport01[ParentIndex]));
-			}
-
-			const float RegionScale = GetRegionScale(
-				Sample.BoundsViewport01,
-				AimViewport01,
-				HeadRegionScale,
-				TorsoRegionScale,
-				LegRegionScale);
-			const float RegionMaxDistance = MaxBoneDistance * RegionScale;
-			if (OutBestDistance > RegionMaxDistance)
-			{
-				return false;
-			}
-
-			bOutIsHeadshot = IsHeadshotAim(Sample, AimViewport01, FMath::Max(RegionMaxDistance * 0.9f, 0.018f));
+			OutBestDistance = ComputeAimDistanceToBodyCenter(Sample, AimViewport01);
+			bOutIsHeadshot = ClassifyHeadshotOnSample(Sample, AimViewport01);
 			return true;
 		}
 	}
@@ -359,11 +461,8 @@ namespace SCARScreenSpaceBodyTargeting
 	bool TryGetBestTarget(
 		const TArray<FSCARScreenSpaceAimSample>& Targets,
 		const FVector2D& AimViewport01,
-		const float MaxBoneDistanceNormalized,
 		const float BoundsPaddingNormalized,
-		const float HeadRegionScale,
-		const float TorsoRegionScale,
-		const float LegRegionScale,
+		const float BodyHitBoundsExpandFraction,
 		const float MaxTargetAgeSeconds,
 		const double NowSeconds,
 		int32& OutTargetIndex,
@@ -386,11 +485,8 @@ namespace SCARScreenSpaceBodyTargeting
 			if (!TryGetAimDistanceOnSample(
 				Sample,
 				AimViewport01,
-				MaxBoneDistanceNormalized,
 				BoundsPaddingNormalized,
-				HeadRegionScale,
-				TorsoRegionScale,
-				LegRegionScale,
+				BodyHitBoundsExpandFraction,
 				Distance,
 				bHeadshot))
 			{
@@ -645,38 +741,6 @@ namespace SCARScreenSpaceBodyTargeting
 
 		OutWorldLocation = WorldLocation + WorldDirection * DistanceCentimeters;
 		return true;
-	}
-
-	bool AccumulateRegionBounds(
-		const FSCARScreenSpaceAimSample& Sample,
-		const TArray<int32>& JointIndices,
-		FVector2D& OutMin,
-		FVector2D& OutMax)
-	{
-		bool bFoundAny = false;
-		for (const int32 Index : JointIndices)
-		{
-			if (!IsJointValid(Sample, Index))
-			{
-				continue;
-			}
-
-			const FVector2D& Point = Sample.JointViewport01[Index];
-			if (!bFoundAny)
-			{
-				OutMin = Point;
-				OutMax = Point;
-				bFoundAny = true;
-				continue;
-			}
-
-			OutMin.X = FMath::Min(OutMin.X, Point.X);
-			OutMin.Y = FMath::Min(OutMin.Y, Point.Y);
-			OutMax.X = FMath::Max(OutMax.X, Point.X);
-			OutMax.Y = FMath::Max(OutMax.Y, Point.Y);
-		}
-
-		return bFoundAny;
 	}
 
 	float ComputeRegionViewportDiameter(

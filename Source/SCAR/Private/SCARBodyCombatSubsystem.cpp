@@ -254,6 +254,35 @@ bool USCARBodyCombatSubsystem::TryGetTrackedHitViewport01(
 	return false;
 }
 
+bool USCARBodyCombatSubsystem::TryGetTrackedHitViewport01Lightweight(FVector2D& OutViewport01) const
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	const USCARBodyDetectionSubsystem* DetectionSubsystem = World->GetSubsystem<USCARBodyDetectionSubsystem>();
+	if (!DetectionSubsystem)
+	{
+		return false;
+	}
+
+	const FSCARBodyDetectionSnapshot& Snapshot = DetectionSubsystem->GetSnapshot();
+	if (SCARScreenSpaceBodyTargeting::TryGetTrackedHitViewport01FromVision(
+		Snapshot.VisionTargets,
+		TrackedTargetId,
+		TrackedAnchorJointA,
+		TrackedAnchorJointB,
+		TrackedBoneT,
+		OutViewport01))
+	{
+		return true;
+	}
+
+	return SCARBodyScreenMapping::MapImageNormalizedToViewport01(FallbackHitImageUV, OutViewport01);
+}
+
 FVector2D USCARBodyCombatSubsystem::GetCombatAimViewport01(const UObject* WorldContextObject)
 {
 	const UWorld* World = GEngine
@@ -264,23 +293,34 @@ FVector2D USCARBodyCombatSubsystem::GetCombatAimViewport01(const UObject* WorldC
 		return FVector2D(0.5f, 0.5f);
 	}
 
-	if (const APlayerController* PlayerController = World->GetFirstPlayerController())
+	const APlayerController* PlayerController = World->GetFirstPlayerController();
+	if (!PlayerController)
 	{
-		int32 SizeX = 0;
-		int32 SizeY = 0;
-		PlayerController->GetViewportSize(SizeX, SizeY);
-		if (SizeX > 0 && SizeY > 0)
-		{
-			float MouseX = 0.f;
-			float MouseY = 0.f;
-			if (PlayerController->GetMousePosition(MouseX, MouseY))
-			{
-				return FVector2D(MouseX / SizeX, MouseY / SizeY);
-			}
-		}
+		return FVector2D(0.5f, 0.5f);
+	}
+
+	int32 SizeX = 0;
+	int32 SizeY = 0;
+	PlayerController->GetViewportSize(SizeX, SizeY);
+	if (SizeX <= 0 || SizeY <= 0)
+	{
+		return FVector2D(0.5f, 0.5f);
+	}
+
+#if PLATFORM_IOS || PLATFORM_ANDROID
+	// Bodycam AR weapons aim through the fixed center-screen reticle, not touch coordinates.
+	(void)WorldContextObject;
+	return FVector2D(0.5f, 0.5f);
+#else
+	float MouseX = 0.f;
+	float MouseY = 0.f;
+	if (PlayerController->GetMousePosition(MouseX, MouseY))
+	{
+		return FVector2D(MouseX / SizeX, MouseY / SizeY);
 	}
 
 	return FVector2D(0.5f, 0.5f);
+#endif
 }
 
 FSCARBodyCombatHitResult USCARBodyCombatSubsystem::TryApplyShot(
@@ -343,11 +383,8 @@ FSCARBodyCombatHitResult USCARBodyCombatSubsystem::TryApplyShotAtViewport(
 	if (!SCARScreenSpaceBodyTargeting::TryGetBestTarget(
 		Samples,
 		AimViewport01,
-		MaxBoneDistanceNormalized,
 		BoundsPaddingNormalized,
-		HeadRegionScale,
-		TorsoRegionScale,
-		LegRegionScale,
+		BodyHitBoundsExpandFraction,
 		MaxTargetAgeSeconds,
 		NowSeconds,
 		BestTargetIndex,
@@ -358,14 +395,11 @@ FSCARBodyCombatHitResult USCARBodyCombatSubsystem::TryApplyShotAtViewport(
 
 	const SCARScreenSpaceBodyTargeting::FSCARScreenSpaceAimSample& BestSample = Samples[BestTargetIndex];
 	FTargetHealthState& HealthState = GetOrCreateHealth(BestSample.TargetId);
-	if (HealthState.DeadUntilSeconds > NowSeconds)
-	{
-		return Result;
-	}
 
 	if (HealthState.Health <= 0.f)
 	{
 		HealthState.Health = MaxHealth;
+		HealthState.DeadUntilSeconds = 0.0;
 	}
 
 	float AppliedDamage = FMath::Max(1.f, BaseDamage);
@@ -390,14 +424,14 @@ FSCARBodyCombatHitResult USCARBodyCombatSubsystem::TryApplyShotAtViewport(
 	const ESCARVisionBodyJoint HitJoint = AnchorJointA;
 
 	FVector2D HitViewport01 = AimViewport01;
-	ESCARVisionBodyJoint FallbackJoint = AnchorJointA;
-	if (!SCARScreenSpaceBodyTargeting::ResolveHitViewportOnSample(
-		BestSample,
-		AimViewport01,
-		HitViewport01,
-		FallbackJoint))
+	if (!SCARBodyScreenMapping::MapImageNormalizedToViewport01(HitImageUV, HitViewport01))
 	{
-		HitViewport01 = USCARVisionBodyPoseProvider::NormalizedToViewport01(HitImageUV);
+		ESCARVisionBodyJoint FallbackJoint = AnchorJointA;
+		SCARScreenSpaceBodyTargeting::ResolveHitViewportOnSample(
+			BestSample,
+			AimViewport01,
+			HitViewport01,
+			FallbackJoint);
 	}
 
 	FVector HitWorldLocation = FVector::ZeroVector;
@@ -445,7 +479,8 @@ FSCARBodyCombatHitResult USCARBodyCombatSubsystem::TryApplyShotAtViewport(
 	if (HealthState.Health <= 0.f)
 	{
 		Result.bKilledTarget = true;
-		HealthState.DeadUntilSeconds = RespawnDelaySeconds > 0.f ? NowSeconds + RespawnDelaySeconds : 0.0;
+		HealthState.Health = MaxHealth;
+		HealthState.DeadUntilSeconds = 0.0;
 	}
 
 	SpawnHitFeedback(Result);
@@ -593,9 +628,15 @@ void USCARBodyCombatSubsystem::SpawnHitFeedback(const FSCARBodyCombatHitResult& 
 
 	if (bSpawnBloodEffect)
 	{
-		if (ASCARBodyHitFeedbackActor* BloodActor = EnsureBloodFeedbackActor())
+		const double NowSeconds = FPlatformTime::Seconds();
+		if (LastBloodEffectPlaySeconds < 0.0
+			|| NowSeconds - LastBloodEffectPlaySeconds >= static_cast<double>(MinBloodEffectIntervalSeconds))
 		{
-			BloodActor->ActivateAtLocation(HitResult.HitWorldLocation);
+			LastBloodEffectPlaySeconds = NowSeconds;
+			if (ASCARBodyHitFeedbackActor* BloodActor = EnsureBloodFeedbackActor())
+			{
+				BloodActor->ActivateAtLocation(HitResult.HitWorldLocation);
+			}
 		}
 	}
 }
@@ -728,7 +769,8 @@ bool USCARBodyCombatSubsystem::ApplyHudHitMarkerLayout(
 		return false;
 	}
 
-	if (FVector2D::DistSquared(Viewport01, LastAppliedMarkerViewport01) < 1.0e-8f
+	if (!bForceMarkerLayoutUpdate
+		&& FVector2D::DistSquared(Viewport01, LastAppliedMarkerViewport01) < 1.0e-8f
 		&& FMath::IsNearlyEqual(SizePx, LastAppliedMarkerSizePx, 0.25f))
 	{
 		return true;
@@ -783,6 +825,7 @@ bool USCARBodyCombatSubsystem::ApplyHudHitMarkerLayout(
 	HitMarkerImage->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 	LastAppliedMarkerViewport01 = Viewport01;
 	LastAppliedMarkerSizePx = SizePx;
+	bForceMarkerLayoutUpdate = false;
 	return true;
 }
 
@@ -837,8 +880,6 @@ void USCARBodyCombatSubsystem::DrawSkeletonHitMarkerOverlay(
 
 void USCARBodyCombatSubsystem::ShowSkeletonHitMarker(const FSCARBodyCombatHitResult& HitResult)
 {
-	const bool bWasVisible = bSkeletonHitMarkerVisible;
-
 	TrackedTargetId = HitResult.TargetId;
 	TrackedAnchorJointA = HitResult.HitAnchorJointA;
 	TrackedAnchorJointB = HitResult.HitAnchorJointB;
@@ -849,28 +890,22 @@ void USCARBodyCombatSubsystem::ShowSkeletonHitMarker(const FSCARBodyCombatHitRes
 	bMarkerHeadshot = HitResult.bIsHeadshot;
 	bSkeletonHitMarkerVisible = true;
 	SkeletonHitMarkerHideRemaining = HitMarkerVisibleSeconds;
+	bForceMarkerLayoutUpdate = true;
+	LastAppliedMarkerViewport01 = FVector2D(-1.f, -1.f);
+	LastAppliedMarkerSizePx = -1.f;
 
-	if (!bWasVisible)
-	{
-		InvalidateHudCache();
-	}
+	InvalidateHudCache();
 
-	if (!bWasVisible && bPlayHudHitMarkerBlink)
+	if (bPlayHudHitMarkerBlink)
 	{
-		const double NowSeconds = FPlatformTime::Seconds();
-		if (LastHudBlinkPlaySeconds < 0.0
-			|| NowSeconds - LastHudBlinkPlaySeconds >= static_cast<double>(MinHitSoundIntervalSeconds))
+		UWorld* World = GetWorld();
+		const APlayerController* PlayerController = World ? World->GetFirstPlayerController() : nullptr;
+		const APawn* Pawn = PlayerController ? PlayerController->GetPawn() : nullptr;
+		if (UUserWidget* HudWidget = SCARBodyCombatFeedback::FindCharacterHudWidget(Pawn))
 		{
-			LastHudBlinkPlaySeconds = NowSeconds;
-			UWorld* World = GetWorld();
-			const APlayerController* PlayerController = World ? World->GetFirstPlayerController() : nullptr;
-			const APawn* Pawn = PlayerController ? PlayerController->GetPawn() : nullptr;
-			if (UUserWidget* HudWidget = SCARBodyCombatFeedback::FindCharacterHudWidget(Pawn))
-			{
-				SCARBodyCombatFeedback::PlayHudCustomEvent(
-					HudWidget,
-					HitResult.bKilledTarget ? FName(TEXT("HitMarkerDead")) : FName(TEXT("HitmarkerEffect")));
-			}
+			SCARBodyCombatFeedback::PlayHudCustomEvent(
+				HudWidget,
+				HitResult.bKilledTarget ? FName(TEXT("HitMarkerDead")) : FName(TEXT("HitmarkerEffect")));
 		}
 	}
 
@@ -900,17 +935,9 @@ void USCARBodyCombatSubsystem::UpdateSkeletonHitMarkerOverlay()
 	}
 
 	FVector2D Viewport01 = FallbackHitViewport01;
-	if (!TryGetTrackedHitViewport01(
-		TrackedTargetId,
-		TrackedAnchorJointA,
-		TrackedAnchorJointB,
-		TrackedBoneT,
-		Viewport01))
+	if (!TryGetTrackedHitViewport01Lightweight(Viewport01))
 	{
-		if (!SCARBodyScreenMapping::MapImageNormalizedToViewport01(FallbackHitImageUV, Viewport01))
-		{
-			Viewport01 = FallbackHitViewport01;
-		}
+		Viewport01 = FallbackHitViewport01;
 	}
 	else
 	{
