@@ -106,6 +106,41 @@ void USCARBodyCombatSubsystem::ResetTargetHealth(const int32 TargetId)
 	State.DeadUntilSeconds = 0.0;
 }
 
+USCARBodyCombatSubsystem::FEffectiveHitThresholds USCARBodyCombatSubsystem::GetEffectiveHitThresholds(
+	APlayerController* PlayerController) const
+{
+	FEffectiveHitThresholds Thresholds;
+	Thresholds.MaxBoneDistanceNormalized = MaxBoneDistanceNormalized;
+	Thresholds.BoundsPaddingNormalized = BoundsPaddingNormalized;
+	Thresholds.HeadRegionScale = HeadRegionScale;
+	Thresholds.TorsoRegionScale = TorsoRegionScale;
+	Thresholds.ShoulderArmRegionScale = ShoulderArmRegionScale;
+	Thresholds.ArmRegionScale = ArmRegionScale;
+	Thresholds.LegRegionScale = LegRegionScale;
+
+	if (!bTightenHitDetectionInLandscape || !PlayerController)
+	{
+		return Thresholds;
+	}
+
+	int32 ViewportWidth = 0;
+	int32 ViewportHeight = 0;
+	PlayerController->GetViewportSize(ViewportWidth, ViewportHeight);
+	if (ViewportWidth <= ViewportHeight)
+	{
+		return Thresholds;
+	}
+
+	Thresholds.MaxBoneDistanceNormalized *= LandscapeMaxBoneDistanceMultiplier;
+	Thresholds.BoundsPaddingNormalized *= LandscapeBoundsPaddingMultiplier;
+	Thresholds.HeadRegionScale *= LandscapeHeadRegionScaleMultiplier;
+	Thresholds.TorsoRegionScale *= LandscapeTorsoRegionScaleMultiplier;
+	Thresholds.ShoulderArmRegionScale *= LandscapeShoulderArmRegionScaleMultiplier;
+	Thresholds.ArmRegionScale *= LandscapeArmRegionScaleMultiplier;
+	Thresholds.LegRegionScale *= LandscapeLegRegionScaleMultiplier;
+	return Thresholds;
+}
+
 bool USCARBodyCombatSubsystem::BuildAimSamples(
 	const USCARBodyDetectionSubsystem* DetectionSubsystem,
 	APlayerController* PlayerController,
@@ -380,11 +415,17 @@ FSCARBodyCombatHitResult USCARBodyCombatSubsystem::TryApplyShotAtViewport(
 	const double NowSeconds = FPlatformTime::Seconds();
 	int32 BestTargetIndex = INDEX_NONE;
 	bool bIsHeadshot = false;
+	const FEffectiveHitThresholds HitThresholds = GetEffectiveHitThresholds(PlayerController);
 	if (!SCARScreenSpaceBodyTargeting::TryGetBestTarget(
 		Samples,
 		AimViewport01,
-		BoundsPaddingNormalized,
-		BodyHitBoundsExpandFraction,
+		HitThresholds.MaxBoneDistanceNormalized,
+		HitThresholds.BoundsPaddingNormalized,
+		HitThresholds.HeadRegionScale,
+		HitThresholds.TorsoRegionScale,
+		HitThresholds.ShoulderArmRegionScale,
+		HitThresholds.ArmRegionScale,
+		HitThresholds.LegRegionScale,
 		MaxTargetAgeSeconds,
 		NowSeconds,
 		BestTargetIndex,
@@ -410,28 +451,25 @@ FSCARBodyCombatHitResult USCARBodyCombatSubsystem::TryApplyShotAtViewport(
 
 	HealthState.Health -= AppliedDamage;
 
-	FVector2D HitImageUV = FVector2D::ZeroVector;
 	ESCARVisionBodyJoint AnchorJointA = ESCARVisionBodyJoint::Root;
 	ESCARVisionBodyJoint AnchorJointB = ESCARVisionBodyJoint::Root;
 	float AnchorBoneT = 0.f;
+	FVector2D BoneAnchorImageUV = FVector2D::ZeroVector;
 	SCARScreenSpaceBodyTargeting::ResolveHitBoneAnchorOnSample(
 		BestSample,
 		AimViewport01,
-		HitImageUV,
+		BoneAnchorImageUV,
 		AnchorJointA,
 		AnchorJointB,
 		AnchorBoneT);
 	const ESCARVisionBodyJoint HitJoint = AnchorJointA;
 
-	FVector2D HitViewport01 = AimViewport01;
-	if (!SCARBodyScreenMapping::MapImageNormalizedToViewport01(HitImageUV, HitViewport01))
+	// Keep hit markers and world feedback at the exact crosshair aim, not the nearest skeleton bone.
+	const FVector2D HitViewport01 = AimViewport01;
+	FVector2D HitImageUV = FVector2D::ZeroVector;
+	if (!SCARBodyScreenMapping::MapViewport01ToImageNormalized(AimViewport01, HitImageUV))
 	{
-		ESCARVisionBodyJoint FallbackJoint = AnchorJointA;
-		SCARScreenSpaceBodyTargeting::ResolveHitViewportOnSample(
-			BestSample,
-			AimViewport01,
-			HitViewport01,
-			FallbackJoint);
+		HitImageUV = BoneAnchorImageUV;
 	}
 
 	FVector HitWorldLocation = FVector::ZeroVector;
@@ -474,6 +512,10 @@ FSCARBodyCombatHitResult USCARBodyCombatSubsystem::TryApplyShotAtViewport(
 		&& BestSample.JointValid[HitJointIndex])
 	{
 		Result.HitMarkerJointOffset = HitImageUV - BestSample.JointImageUV[HitJointIndex];
+	}
+	else
+	{
+		Result.HitMarkerJointOffset = FVector2D::ZeroVector;
 	}
 
 	if (HealthState.Health <= 0.f)
@@ -935,11 +977,7 @@ void USCARBodyCombatSubsystem::UpdateSkeletonHitMarkerOverlay()
 	}
 
 	FVector2D Viewport01 = FallbackHitViewport01;
-	if (!TryGetTrackedHitViewport01Lightweight(Viewport01))
-	{
-		Viewport01 = FallbackHitViewport01;
-	}
-	else
+	if (SCARBodyScreenMapping::MapImageNormalizedToViewport01(FallbackHitImageUV, Viewport01))
 	{
 		FallbackHitViewport01 = Viewport01;
 	}

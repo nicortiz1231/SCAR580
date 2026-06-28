@@ -132,6 +132,33 @@ bool SCAR_MapImageNormalizedToViewport01_IOS(const FVector2D& ImageNormalized, F
 	return false;
 }
 
+bool SCAR_MapViewport01ToImageNormalized_IOS(const FVector2D& Viewport01, FVector2D& OutImageNormalized)
+{
+	if (const FAppleARKitCamera* Camera = GetCurrentARKitCamera())
+	{
+		FVector2D ViewportSize;
+		if (!GetViewportSize(ViewportSize))
+		{
+			return false;
+		}
+
+		const FVector2D Screen(
+			Viewport01.X * ViewportSize.X,
+			Viewport01.Y * ViewportSize.Y);
+		OutImageNormalized = Camera->GetImageCoordinateForScreenPosition(
+			Screen,
+			EAppleARKitBackgroundFitMode::Fit,
+			ViewportSize.X,
+			ViewportSize.Y);
+		return OutImageNormalized.X >= 0.f
+			&& OutImageNormalized.X <= 1.f
+			&& OutImageNormalized.Y >= 0.f
+			&& OutImageNormalized.Y <= 1.f;
+	}
+
+	return false;
+}
+
 bool SCAR_GetCameraImageResolution_IOS(FVector2D& OutImageResolution)
 {
 	if (const FAppleARKitCamera* Camera = GetCurrentARKitCamera())

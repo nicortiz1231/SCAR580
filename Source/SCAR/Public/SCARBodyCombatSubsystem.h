@@ -25,26 +25,55 @@ public:
 	FSCARBodyCombatHitDelegate OnBodyHit;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Thresholds")
-	float MaxBoneDistanceNormalized = 0.08f;
+	float MaxBoneDistanceNormalized = 0.056f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Thresholds")
-	float BoundsPaddingNormalized = 0.03f;
-
-	/** Expands the detected body bounding box by this fraction of its width/height on each side. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Thresholds", meta = (ClampMin = "0.0", ClampMax = "0.5"))
-	float BodyHitBoundsExpandFraction = 0.2f;
+	float BoundsPaddingNormalized = 0.014f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Thresholds")
-	float HeadRegionScale = 0.5f;
+	float HeadRegionScale = 0.2f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Thresholds")
-	float TorsoRegionScale = 1.f;
+	float TorsoRegionScale = 0.68f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Thresholds")
-	float LegRegionScale = 0.7f;
+	float ShoulderArmRegionScale = 0.74f;
+
+	/** Forearm / upper-arm forgiveness (defaults match shoulders in portrait). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Thresholds")
+	float ArmRegionScale = 0.74f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Thresholds")
+	float LegRegionScale = 0.62f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Thresholds")
 	float MaxTargetAgeSeconds = 0.75f;
+
+	/** Applies tighter hit thresholds when viewport width exceeds height (landscape). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Thresholds|Landscape")
+	bool bTightenHitDetectionInLandscape = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Thresholds|Landscape", meta = (ClampMin = "0.1", ClampMax = "1.0", EditCondition = "bTightenHitDetectionInLandscape"))
+	float LandscapeMaxBoneDistanceMultiplier = 0.86f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Thresholds|Landscape", meta = (ClampMin = "0.1", ClampMax = "1.0", EditCondition = "bTightenHitDetectionInLandscape"))
+	float LandscapeBoundsPaddingMultiplier = 0.8f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Thresholds|Landscape", meta = (ClampMin = "0.1", ClampMax = "1.0", EditCondition = "bTightenHitDetectionInLandscape"))
+	float LandscapeLegRegionScaleMultiplier = 0.78f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Thresholds|Landscape", meta = (ClampMin = "0.1", ClampMax = "1.0", EditCondition = "bTightenHitDetectionInLandscape"))
+	float LandscapeTorsoRegionScaleMultiplier = 0.9f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Thresholds|Landscape", meta = (ClampMin = "0.1", ClampMax = "1.0", EditCondition = "bTightenHitDetectionInLandscape"))
+	float LandscapeShoulderArmRegionScaleMultiplier = 0.94f;
+
+	/** Landscape-only extra tightening for elbow/forearm hits (shoulders unchanged). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Thresholds|Landscape", meta = (ClampMin = "0.1", ClampMax = "1.0", EditCondition = "bTightenHitDetectionInLandscape"))
+	float LandscapeArmRegionScaleMultiplier = 0.88f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Thresholds|Landscape", meta = (ClampMin = "0.1", ClampMax = "1.0", EditCondition = "bTightenHitDetectionInLandscape"))
+	float LandscapeHeadRegionScaleMultiplier = 0.92f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Body Combat|Damage")
 	float MaxHealth = 100.f;
@@ -141,6 +170,17 @@ private:
 		double DeadUntilSeconds = 0.0;
 	};
 
+	struct FEffectiveHitThresholds
+	{
+		float MaxBoneDistanceNormalized = 0.f;
+		float BoundsPaddingNormalized = 0.f;
+		float HeadRegionScale = 0.f;
+		float TorsoRegionScale = 0.f;
+		float ShoulderArmRegionScale = 0.f;
+		float ArmRegionScale = 0.f;
+		float LegRegionScale = 0.f;
+	};
+
 	TMap<int32, FTargetHealthState> HealthByTargetId;
 
 	bool BuildAimSamples(
@@ -150,6 +190,7 @@ private:
 
 	FTargetHealthState& GetOrCreateHealth(int32 TargetId);
 	void ResetTargetHealth(int32 TargetId);
+	FEffectiveHitThresholds GetEffectiveHitThresholds(APlayerController* PlayerController) const;
 
 	void ShowSkeletonHitMarker(const FSCARBodyCombatHitResult& HitResult);
 	void HideSkeletonHitMarker();

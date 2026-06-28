@@ -60,6 +60,43 @@ namespace
 		OutViewport01.Y = ScreenY / ViewportSize.Y;
 		return true;
 	}
+
+	bool MapViewportToImageUsingAspectFit(const FVector2D& Viewport01, FVector2D& OutImageNormalized)
+	{
+		FVector2D ViewportSize;
+		if (!GetViewportSize(ViewportSize))
+		{
+			return false;
+		}
+
+		FVector2D ImageResolution(1920.f, 1440.f);
+		SCARBodyScreenMapping::GetCameraImageResolution(ImageResolution);
+
+		const float ImageAspect = ImageResolution.X / FMath::Max(ImageResolution.Y, 1.f);
+		const float ScreenAspect = ViewportSize.X / FMath::Max(ViewportSize.Y, 1.f);
+		const float ScreenX = Viewport01.X * ViewportSize.X;
+		const float ScreenY = Viewport01.Y * ViewportSize.Y;
+
+		if (ScreenAspect > ImageAspect)
+		{
+			const float VisibleWidth = ViewportSize.Y * ImageAspect;
+			const float OffsetX = (ViewportSize.X - VisibleWidth) * 0.5f;
+			OutImageNormalized.X = (ScreenX - OffsetX) / FMath::Max(VisibleWidth, KINDA_SMALL_NUMBER);
+			OutImageNormalized.Y = ScreenY / FMath::Max(ViewportSize.Y, KINDA_SMALL_NUMBER);
+		}
+		else
+		{
+			const float VisibleHeight = ViewportSize.X / ImageAspect;
+			const float OffsetY = (ViewportSize.Y - VisibleHeight) * 0.5f;
+			OutImageNormalized.X = ScreenX / FMath::Max(ViewportSize.X, KINDA_SMALL_NUMBER);
+			OutImageNormalized.Y = (ScreenY - OffsetY) / FMath::Max(VisibleHeight, KINDA_SMALL_NUMBER);
+		}
+
+		return OutImageNormalized.X >= 0.f
+			&& OutImageNormalized.X <= 1.f
+			&& OutImageNormalized.Y >= 0.f
+			&& OutImageNormalized.Y <= 1.f;
+	}
 }
 
 bool SCARBodyScreenMapping::GetCameraImageResolution(FVector2D& OutImageResolution)
@@ -99,6 +136,20 @@ bool SCARBodyScreenMapping::MapImageNormalizedToViewport01(
 #endif
 
 	return MapImageToViewportUsingAspectFit(ImageNormalized, OutViewport01);
+}
+
+bool SCARBodyScreenMapping::MapViewport01ToImageNormalized(
+	const FVector2D& Viewport01,
+	FVector2D& OutImageNormalized)
+{
+#if PLATFORM_IOS
+	if (SCAR_MapViewport01ToImageNormalized_IOS(Viewport01, OutImageNormalized))
+	{
+		return true;
+	}
+#endif
+
+	return MapViewportToImageUsingAspectFit(Viewport01, OutImageNormalized);
 }
 
 bool SCARBodyScreenMapping::ImageNormalizedToWorldAtDistance(

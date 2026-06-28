@@ -160,12 +160,109 @@ namespace SCARScreenSpaceBodyTargeting
 				return FMath::Clamp(HeadRegionScale, 0.1f, 1.f);
 			}
 
-			if (NormalizedBodyY >= 0.74f)
+			if (NormalizedBodyY >= 0.68f)
 			{
 				return FMath::Clamp(LegRegionScale, 0.1f, 1.f);
 			}
 
 			return FMath::Clamp(TorsoRegionScale, 0.1f, 1.f);
+		}
+
+		bool IsShoulderJointIndex(const int32 Index)
+		{
+			switch (static_cast<ESCARVisionBodyJoint>(Index))
+			{
+			case ESCARVisionBodyJoint::LeftShoulder:
+			case ESCARVisionBodyJoint::RightShoulder:
+				return true;
+			default:
+				return false;
+			}
+		}
+
+		bool IsArmJointIndex(const int32 Index)
+		{
+			switch (static_cast<ESCARVisionBodyJoint>(Index))
+			{
+			case ESCARVisionBodyJoint::LeftElbow:
+			case ESCARVisionBodyJoint::RightElbow:
+			case ESCARVisionBodyJoint::LeftWrist:
+			case ESCARVisionBodyJoint::RightWrist:
+				return true;
+			default:
+				return false;
+			}
+		}
+
+		bool IsArmBoneSegment(const int32 Index, const int32 ParentIndex)
+		{
+			if (!IsArmJointIndex(Index) && !IsArmJointIndex(ParentIndex))
+			{
+				return false;
+			}
+
+			const int32 NeckIndex = static_cast<int32>(ESCARVisionBodyJoint::Neck);
+			if ((IsShoulderJointIndex(Index) && ParentIndex == NeckIndex)
+				|| (IsShoulderJointIndex(ParentIndex) && Index == NeckIndex))
+			{
+				return false;
+			}
+
+			return true;
+		}
+
+		bool IsShoulderBoneSegment(const int32 Index, const int32 ParentIndex)
+		{
+			if (IsArmBoneSegment(Index, ParentIndex))
+			{
+				return false;
+			}
+
+			return IsShoulderJointIndex(Index) || IsShoulderJointIndex(ParentIndex);
+		}
+
+		float ResolveRegionScaleForAim(
+			const FSCARScreenSpaceAimSample& Sample,
+			const FVector2D& AimViewport01,
+			const float HeadRegionScale,
+			const float TorsoRegionScale,
+			const float ShoulderArmRegionScale,
+			const float ArmRegionScale,
+			const float LegRegionScale,
+			const float ClosestJointDistance,
+			const int32 ClosestJointIndex,
+			const float ClosestSegmentDistance,
+			const int32 ClosestSegmentIndex,
+			const int32 ClosestSegmentParentIndex)
+		{
+			const bool bJointIsClosest = ClosestJointDistance <= ClosestSegmentDistance;
+			if (bJointIsClosest)
+			{
+				if (IsShoulderJointIndex(ClosestJointIndex))
+				{
+					return FMath::Clamp(ShoulderArmRegionScale, 0.1f, 1.f);
+				}
+
+				if (IsArmJointIndex(ClosestJointIndex))
+				{
+					return FMath::Clamp(ArmRegionScale, 0.1f, 1.f);
+				}
+			}
+			else if (IsArmBoneSegment(ClosestSegmentIndex, ClosestSegmentParentIndex))
+			{
+				return FMath::Clamp(ArmRegionScale, 0.1f, 1.f);
+			}
+			else if (IsShoulderBoneSegment(ClosestSegmentIndex, ClosestSegmentParentIndex))
+			{
+				return FMath::Clamp(ShoulderArmRegionScale, 0.1f, 1.f);
+			}
+
+			return GetRegionScale(
+				Sample.BoundsViewport01,
+				AimViewport01,
+				HeadRegionScale,
+				TorsoRegionScale,
+				LegRegionScale);
 		}
 
 		float GetNormalizedBodyY(const FVector4& Bounds, const FVector2D& AimViewport01)
@@ -183,7 +280,7 @@ namespace SCARScreenSpaceBodyTargeting
 				return ESCARBodyHitRegion::Head;
 			}
 
-			if (NormalizedBodyY >= 0.74f)
+			if (NormalizedBodyY >= 0.68f)
 			{
 				return ESCARBodyHitRegion::Legs;
 			}
@@ -231,42 +328,6 @@ namespace SCARScreenSpaceBodyTargeting
 			}
 		}
 
-		bool ComputeExpandedBodyHitBounds(
-			const FVector4& BodyBounds,
-			const float BoundsPadding,
-			const float ExpandFraction,
-			FVector4& OutHitBounds)
-		{
-			const float BodyWidth = FMath::Max(BodyBounds.Z - BodyBounds.X, KINDA_SMALL_NUMBER);
-			const float BodyHeight = FMath::Max(BodyBounds.W - BodyBounds.Y, KINDA_SMALL_NUMBER);
-			const float ExpandX = FMath::Max(BoundsPadding, BodyWidth * ExpandFraction);
-			const float ExpandY = FMath::Max(BoundsPadding, BodyHeight * ExpandFraction);
-			OutHitBounds = FVector4(
-				BodyBounds.X - ExpandX,
-				BodyBounds.Y - ExpandY,
-				BodyBounds.Z + ExpandX,
-				BodyBounds.W + ExpandY);
-			return OutHitBounds.Z > OutHitBounds.X && OutHitBounds.W > OutHitBounds.Y;
-		}
-
-		bool IsAimInsideBodyHitBounds(
-			const FSCARScreenSpaceAimSample& Sample,
-			const FVector2D& AimViewport01,
-			const float BoundsPadding,
-			const float ExpandFraction)
-		{
-			FVector4 HitBounds;
-			if (!ComputeExpandedBodyHitBounds(Sample.BoundsViewport01, BoundsPadding, ExpandFraction, HitBounds))
-			{
-				return false;
-			}
-
-			return AimViewport01.X >= HitBounds.X
-				&& AimViewport01.X <= HitBounds.Z
-				&& AimViewport01.Y >= HitBounds.Y
-				&& AimViewport01.Y <= HitBounds.W;
-		}
-
 		bool IsHeadshotAim(const FSCARScreenSpaceAimSample& Sample, const FVector2D& AimViewport01, float Threshold)
 		{
 			for (int32 Index = 0; Index <= static_cast<int32>(ESCARVisionBodyJoint::RightEar); ++Index)
@@ -290,49 +351,107 @@ namespace SCARScreenSpaceBodyTargeting
 			return AimViewport01.Y <= ShoulderY - 0.02f;
 		}
 
-		bool ClassifyHeadshotOnSample(
-			const FSCARScreenSpaceAimSample& Sample,
-			const FVector2D& AimViewport01)
-		{
-			const float NormalizedBodyY = GetNormalizedBodyY(Sample.BoundsViewport01, AimViewport01);
-			if (NormalizedBodyY <= 0.32f)
-			{
-				return true;
-			}
-
-			const float BodyWidth = FMath::Max(
-				Sample.BoundsViewport01.Z - Sample.BoundsViewport01.X,
-				KINDA_SMALL_NUMBER);
-			return IsHeadshotAim(Sample, AimViewport01, FMath::Max(BodyWidth * 0.35f, 0.03f));
-		}
-
-		float ComputeAimDistanceToBodyCenter(
-			const FSCARScreenSpaceAimSample& Sample,
-			const FVector2D& AimViewport01)
-		{
-			const FVector4& Bounds = Sample.BoundsViewport01;
-			const FVector2D Center((Bounds.X + Bounds.Z) * 0.5f, (Bounds.Y + Bounds.W) * 0.5f);
-			return FVector2D::Distance(AimViewport01, Center);
-		}
-
 		bool TryGetAimDistanceOnSample(
 			const FSCARScreenSpaceAimSample& Sample,
 			const FVector2D& AimViewport01,
+			const float MaxBoneDistance,
 			const float BoundsPadding,
-			const float ExpandFraction,
+			const float HeadRegionScale,
+			const float TorsoRegionScale,
+			const float ShoulderArmRegionScale,
+			const float ArmRegionScale,
+			const float LegRegionScale,
 			float& OutBestDistance,
 			bool& bOutIsHeadshot)
 		{
 			OutBestDistance = MAX_FLT;
 			bOutIsHeadshot = false;
 
-			if (!IsAimInsideBodyHitBounds(Sample, AimViewport01, BoundsPadding, ExpandFraction))
+			if (Sample.JointViewport01.Num() == 0)
 			{
 				return false;
 			}
 
-			OutBestDistance = ComputeAimDistanceToBodyCenter(Sample, AimViewport01);
-			bOutIsHeadshot = ClassifyHeadshotOnSample(Sample, AimViewport01);
+			// Tight outer gate — reject shots clearly beside the detected body silhouette.
+			const FVector4 PaddedBounds(
+				Sample.BoundsViewport01.X - BoundsPadding,
+				Sample.BoundsViewport01.Y - BoundsPadding,
+				Sample.BoundsViewport01.Z + BoundsPadding,
+				Sample.BoundsViewport01.W + BoundsPadding);
+
+			if (AimViewport01.X < PaddedBounds.X
+				|| AimViewport01.X > PaddedBounds.Z
+				|| AimViewport01.Y < PaddedBounds.Y
+				|| AimViewport01.Y > PaddedBounds.W)
+			{
+				return false;
+			}
+
+			float ClosestJointDistance = MAX_FLT;
+			int32 ClosestJointIndex = INDEX_NONE;
+			for (int32 Index = 0; Index < Sample.JointViewport01.Num(); ++Index)
+			{
+				if (!IsJointValid(Sample, Index))
+				{
+					continue;
+				}
+
+				const float Distance = FVector2D::Distance(AimViewport01, Sample.JointViewport01[Index]);
+				if (Distance < ClosestJointDistance)
+				{
+					ClosestJointDistance = Distance;
+					ClosestJointIndex = Index;
+				}
+			}
+
+			float ClosestSegmentDistance = MAX_FLT;
+			int32 ClosestSegmentIndex = INDEX_NONE;
+			int32 ClosestSegmentParentIndex = INDEX_NONE;
+			for (int32 Index = 0; Index < VisionJointCount; ++Index)
+			{
+				const int32 ParentIndex = ParentIndices[Index];
+				if (ParentIndex < 0 || !IsJointValid(Sample, Index) || !IsJointValid(Sample, ParentIndex))
+				{
+					continue;
+				}
+
+				const float Distance = DistancePointToSegment(
+					AimViewport01,
+					Sample.JointViewport01[Index],
+					Sample.JointViewport01[ParentIndex]);
+				if (Distance < ClosestSegmentDistance)
+				{
+					ClosestSegmentDistance = Distance;
+					ClosestSegmentIndex = Index;
+					ClosestSegmentParentIndex = ParentIndex;
+				}
+			}
+
+			OutBestDistance = FMath::Min(ClosestJointDistance, ClosestSegmentDistance);
+
+			const float RegionScale = ResolveRegionScaleForAim(
+				Sample,
+				AimViewport01,
+				HeadRegionScale,
+				TorsoRegionScale,
+				ShoulderArmRegionScale,
+				ArmRegionScale,
+				LegRegionScale,
+				ClosestJointDistance,
+				ClosestJointIndex,
+				ClosestSegmentDistance,
+				ClosestSegmentIndex,
+				ClosestSegmentParentIndex);
+			const float RegionMaxDistance = MaxBoneDistance * RegionScale;
+			if (OutBestDistance > RegionMaxDistance)
+			{
+				return false;
+			}
+
+			bOutIsHeadshot = IsHeadshotAim(
+				Sample,
+				AimViewport01,
+				FMath::Max(RegionMaxDistance * 0.9f, 0.018f));
 			return true;
 		}
 	}
@@ -461,8 +580,13 @@ namespace SCARScreenSpaceBodyTargeting
 	bool TryGetBestTarget(
 		const TArray<FSCARScreenSpaceAimSample>& Targets,
 		const FVector2D& AimViewport01,
+		const float MaxBoneDistanceNormalized,
 		const float BoundsPaddingNormalized,
-		const float BodyHitBoundsExpandFraction,
+		const float HeadRegionScale,
+		const float TorsoRegionScale,
+		const float ShoulderArmRegionScale,
+		const float ArmRegionScale,
+		const float LegRegionScale,
 		const float MaxTargetAgeSeconds,
 		const double NowSeconds,
 		int32& OutTargetIndex,
@@ -485,8 +609,13 @@ namespace SCARScreenSpaceBodyTargeting
 			if (!TryGetAimDistanceOnSample(
 				Sample,
 				AimViewport01,
+				MaxBoneDistanceNormalized,
 				BoundsPaddingNormalized,
-				BodyHitBoundsExpandFraction,
+				HeadRegionScale,
+				TorsoRegionScale,
+				ShoulderArmRegionScale,
+				ArmRegionScale,
+				LegRegionScale,
 				Distance,
 				bHeadshot))
 			{
