@@ -1,6 +1,7 @@
 #include "SCARSniperAdsCameraComponent.h"
 
 #include "SCARNearClipCameraModifier.h"
+#include "SCARPhonePreviewParity.h"
 #include "Camera/CameraComponent.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Components/PrimitiveComponent.h"
@@ -87,10 +88,19 @@ void USCARSniperAdsCameraComponent::ConfigureFirstPersonCamera()
 		return;
 	}
 
-	Camera->SetEnableFirstPersonFieldOfView(true);
-	Camera->SetEnableFirstPersonScale(true);
-	Camera->SetFirstPersonFieldOfView(AdsFirstPersonFov);
-	Camera->SetFirstPersonScale(1.f);
+	if (SCARPhonePreviewParity::ShouldUseMobileCameraPath(GetWorld()))
+	{
+		Camera->SetEnableFirstPersonFieldOfView(false);
+		Camera->SetEnableFirstPersonScale(false);
+		Camera->SetFirstPersonScale(1.f);
+	}
+	else
+	{
+		Camera->SetEnableFirstPersonFieldOfView(true);
+		Camera->SetEnableFirstPersonScale(true);
+		Camera->SetFirstPersonFieldOfView(AdsFirstPersonFov);
+		Camera->SetFirstPersonScale(1.f);
+	}
 	bCameraConfigured = true;
 }
 
@@ -111,6 +121,12 @@ void USCARSniperAdsCameraComponent::UpdateFirstPersonScaleForAds()
 	const APlayerController* PC = Cast<APlayerController>(Pawn->GetController());
 	if (!PC || !PC->PlayerCameraManager)
 	{
+		return;
+	}
+
+	if (SCARPhonePreviewParity::ShouldUseMobileCameraPath(GetWorld()))
+	{
+		Camera->SetFirstPersonScale(1.f);
 		return;
 	}
 

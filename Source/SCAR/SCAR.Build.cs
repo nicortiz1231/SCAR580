@@ -19,6 +19,10 @@ public class SCAR : ModuleRules
 				"SlateCore",
 				"Niagara",
 				"EnhancedInput",
+				"InputCore",
+				"XRBase",
+				"Sockets",
+				"Networking",
 			});
 
 		if (Target.Platform == UnrealTargetPlatform.IOS)

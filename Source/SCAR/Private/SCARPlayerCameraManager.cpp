@@ -1,6 +1,7 @@
 #include "SCARPlayerCameraManager.h"
 
 #include "CoreGlobals.h"
+#include "SCARPhonePreviewParity.h"
 
 ASCARPlayerCameraManager::ASCARPlayerCameraManager()
 {
@@ -13,7 +14,12 @@ void ASCARPlayerCameraManager::UpdateViewTargetInternal(FTViewTarget& OutVT, flo
 	OutVT.POV.PerspectiveNearClipPlane = ForcedNearClipPlane;
 	GNearClippingPlane = ForcedNearClipPlane;
 
-	if (OutVT.POV.FOV <= AdsFovThreshold)
+	// Mobile (and editor PIE mirroring phone) ignore FirstPersonFOV/Scale — main FOV only.
+	if (SCARPhonePreviewParity::ShouldUseMobileCameraPath(GetWorld()))
+	{
+		OutVT.POV.bUseFirstPersonParameters = false;
+	}
+	else if (OutVT.POV.FOV <= AdsFovThreshold)
 	{
 		OutVT.POV.bUseFirstPersonParameters = true;
 		OutVT.POV.FirstPersonFOV = AdsFirstPersonFov;

@@ -22,6 +22,10 @@
 			]
 		},
 		{
+			"Name": "XRBase",
+			"Enabled": true
+		},
+		{
 			"Name": "LiveLink",
 			"Enabled": true
 		},
@@ -62,6 +66,10 @@
 		{
 			"Name": "UnrealMCP",
 			"Enabled": true
+		},
+		{
+			"Name": "CesiumForUnreal",
+			"Enabled": false
 		}
 	]
 }

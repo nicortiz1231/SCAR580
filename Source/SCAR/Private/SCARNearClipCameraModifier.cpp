@@ -1,6 +1,8 @@
 #include "SCARNearClipCameraModifier.h"
 
+#include "Camera/PlayerCameraManager.h"
 #include "CoreGlobals.h"
+#include "SCARPhonePreviewParity.h"
 
 USCARNearClipCameraModifier::USCARNearClipCameraModifier()
 {
@@ -16,7 +18,9 @@ bool USCARNearClipCameraModifier::ModifyCamera(float DeltaTime, FMinimalViewInfo
 	InOutPOV.PerspectiveNearClipPlane = NearClipPlane;
 	GNearClippingPlane = NearClipPlane;
 
-	if (InOutPOV.FOV <= AdsFovThreshold)
+	const UWorld* ViewWorld = CameraOwner ? CameraOwner->GetWorld() : nullptr;
+	if (!SCARPhonePreviewParity::ShouldUseMobileCameraPath(ViewWorld)
+		&& InOutPOV.FOV <= AdsFovThreshold)
 	{
 		InOutPOV.bUseFirstPersonParameters = true;
 		InOutPOV.FirstPersonFOV = AdsFirstPersonFov;
