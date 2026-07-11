@@ -6,6 +6,7 @@
 #include "SCARARMultiplayerBlueprintLibrary.h"
 #include "SCARARMultiplayerMenuWidget.h"
 #include "SCARARMultiplayerSlateMenu.h"
+#include "SCARWeaponModdingLauncherSlate.h"
 
 ASCARARMultiplayerPlayerController::ASCARARMultiplayerPlayerController()
 {
@@ -27,28 +28,24 @@ void ASCARARMultiplayerPlayerController::BeginPlay()
 	{
 		HideMultiplayerMenu();
 		NotifyMultiplayerConnectionStatus();
-		return;
 	}
-
-	if (!bShowMultiplayerMenuOnBeginPlay)
+	else if (bShowMultiplayerMenuOnBeginPlay)
 	{
-		return;
-	}
-
-	if (USCARARMultiplayerBlueprintLibrary::ShouldShowMultiplayerMenu(this))
-	{
-		ShowMultiplayerMenu();
-		return;
-	}
-
-	if (NetMode == NM_ListenServer)
-	{
-		ShowMultiplayerMenu();
-		if (MultiplayerMenuWidget)
+		if (USCARARMultiplayerBlueprintLibrary::ShouldShowMultiplayerMenu(this))
 		{
-			MultiplayerMenuWidget->SetHostSessionMode(true);
+			ShowMultiplayerMenu();
+		}
+		else if (NetMode == NM_ListenServer)
+		{
+			ShowMultiplayerMenu();
+			if (MultiplayerMenuWidget)
+			{
+				MultiplayerMenuWidget->SetHostSessionMode(true);
+			}
 		}
 	}
+
+	FSCARWeaponModdingLauncherSlate::Show(this);
 }
 
 void ASCARARMultiplayerPlayerController::NotifyMultiplayerConnectionStatus()

@@ -4,6 +4,8 @@
 #include "Components/ActorComponent.h"
 #include "SCARSniperAdsCameraComponent.generated.h"
 
+class AActor;
+
 class USCARNearClipCameraModifier;
 class UCameraComponent;
 
@@ -42,9 +44,13 @@ private:
 	bool bCameraConfigured = false;
 	bool bMeshesTagged = false;
 
+	TWeakObjectPtr<AActor> TrackedWeapon;
+	TWeakObjectPtr<AActor> TrackedLaserRef;
+
 	void EnsureNearClipModifier();
 	void ConfigureFirstPersonCamera();
 	void TagWeaponMeshesFirstPerson();
+	void RefreshWeaponAttachmentEffects();
 	UCameraComponent* FindFirstPersonCamera() const;
 	void TagActorPrimitives(class AActor* Actor) const;
 	void UpdateFirstPersonScaleForAds();

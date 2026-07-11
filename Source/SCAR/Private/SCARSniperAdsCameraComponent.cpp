@@ -2,17 +2,21 @@
 
 #include "SCARNearClipCameraModifier.h"
 #include "SCARPhonePreviewParity.h"
+#include "SCARWeaponAttachmentBlueprintLibrary.h"
 #include "Camera/CameraComponent.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Components/PrimitiveComponent.h"
 #include "Engine/Engine.h"
+#include "GameFramework/Actor.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
+#include "UObject/UnrealType.h"
 
 USCARSniperAdsCameraComponent::USCARSniperAdsCameraComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.bStartWithTickEnabled = true;
+	PrimaryComponentTick.TickGroup = TG_LastDemotable;
 }
 
 void USCARSniperAdsCameraComponent::BeginPlay()
@@ -135,6 +139,23 @@ void USCARSniperAdsCameraComponent::UpdateFirstPersonScaleForAds()
 	Camera->SetFirstPersonScale(Scale);
 }
 
+static AActor* GetPawnSpawnedWeapon(const APawn* Pawn)
+{
+	if (!Pawn)
+	{
+		return nullptr;
+	}
+
+	const FProperty* SpawnedItemProperty = Pawn->GetClass()->FindPropertyByName(TEXT("SpawnedItem"));
+	const FObjectProperty* ObjectProperty = CastField<FObjectProperty>(SpawnedItemProperty);
+	if (!ObjectProperty)
+	{
+		return nullptr;
+	}
+
+	return Cast<AActor>(ObjectProperty->GetObjectPropertyValue_InContainer(Pawn));
+}
+
 void USCARSniperAdsCameraComponent::TagActorPrimitives(AActor* Actor) const
 {
 	if (!Actor)
@@ -152,6 +173,27 @@ void USCARSniperAdsCameraComponent::TagActorPrimitives(AActor* Actor) const
 		}
 
 		const FString Name = Prim->GetName();
+		if (Name.Contains(TEXT("SCAR_AR"))
+			|| Name.Contains(TEXT("Laser"))
+			|| Name.Contains(TEXT("Decal"))
+			|| Name.Contains(TEXT("Beam"))
+			|| Name.Contains(TEXT("Flash"))
+			|| Name.Contains(TEXT("Dot")))
+		{
+			if (SCARPhonePreviewParity::ShouldUseMobileCameraPath(GetWorld()))
+			{
+				Prim->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::WorldSpaceRepresentation);
+			}
+			else
+			{
+				Prim->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::FirstPerson);
+			}
+			Prim->SetHiddenInGame(false);
+			Prim->SetVisibility(true, true);
+			Prim->SetBoundsScale(2.f);
+			continue;
+		}
+
 		if (Name.Contains(TEXT("Optic"))
 			|| Name.Contains(TEXT("Weapon"))
 			|| Name.Contains(TEXT("Scope"))
@@ -182,6 +224,11 @@ void USCARSniperAdsCameraComponent::TagWeaponMeshesFirstPerson()
 
 	TagActorPrimitives(Pawn);
 
+	if (AActor* Weapon = GetPawnSpawnedWeapon(Pawn))
+	{
+		TagActorPrimitives(Weapon);
+	}
+
 	TArray<AActor*> Attached;
 	Pawn->GetAttachedActors(Attached, true, true);
 	for (AActor* Actor : Attached)
@@ -189,7 +236,55 @@ void USCARSniperAdsCameraComponent::TagWeaponMeshesFirstPerson()
 		TagActorPrimitives(Actor);
 	}
 
+	USCARWeaponAttachmentBlueprintLibrary::EnsureWeaponLaserFlashEffectsForPawn(Pawn);
+
 	bMeshesTagged = true;
+}
+
+static AActor* GetWeaponLaserRef(AActor* Weapon)
+{
+	if (!Weapon)
+	{
+		return nullptr;
+	}
+
+	const FObjectProperty* LaserRefProperty = CastField<FObjectProperty>(Weapon->GetClass()->FindPropertyByName(TEXT("LaserRef")));
+	if (!LaserRefProperty)
+	{
+		return nullptr;
+	}
+
+	return Cast<AActor>(LaserRefProperty->GetObjectPropertyValue_InContainer(Weapon));
+}
+
+void USCARSniperAdsCameraComponent::RefreshWeaponAttachmentEffects()
+{
+	APawn* Pawn = Cast<APawn>(GetOwner());
+	if (!Pawn || !Pawn->IsLocallyControlled())
+	{
+		return;
+	}
+
+	AActor* Weapon = GetPawnSpawnedWeapon(Pawn);
+	if (Weapon != TrackedWeapon.Get())
+	{
+		TrackedWeapon = Weapon;
+		bMeshesTagged = false;
+	}
+
+	AActor* LaserRef = GetWeaponLaserRef(Weapon);
+	if (LaserRef != TrackedLaserRef.Get())
+	{
+		TrackedLaserRef = LaserRef;
+		bMeshesTagged = false;
+	}
+
+	if (!bMeshesTagged)
+	{
+		TagWeaponMeshesFirstPerson();
+	}
+
+	USCARWeaponAttachmentBlueprintLibrary::EnsureWeaponLaserFlashEffectsForPawn(Pawn);
 }
 
 void USCARSniperAdsCameraComponent::TickComponent(
@@ -202,10 +297,5 @@ void USCARSniperAdsCameraComponent::TickComponent(
 	EnsureNearClipModifier();
 	ConfigureFirstPersonCamera();
 	UpdateFirstPersonScaleForAds();
-
-	// Re-tag when weapon is spawned/swapped.
-	if (!bMeshesTagged)
-	{
-		TagWeaponMeshesFirstPerson();
-	}
+	RefreshWeaponAttachmentEffects();
 }

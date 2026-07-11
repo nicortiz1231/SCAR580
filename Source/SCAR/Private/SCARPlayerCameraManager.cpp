@@ -14,10 +14,11 @@ void ASCARPlayerCameraManager::UpdateViewTargetInternal(FTViewTarget& OutVT, flo
 	OutVT.POV.PerspectiveNearClipPlane = ForcedNearClipPlane;
 	GNearClippingPlane = ForcedNearClipPlane;
 
-	// Mobile (and editor PIE mirroring phone) ignore FirstPersonFOV/Scale — main FOV only.
+	// Keep first-person parameters enabled on mobile so laser/weapon render over AR passthrough.
 	if (SCARPhonePreviewParity::ShouldUseMobileCameraPath(GetWorld()))
 	{
-		OutVT.POV.bUseFirstPersonParameters = false;
+		OutVT.POV.bUseFirstPersonParameters = true;
+		OutVT.POV.FirstPersonScale = 1.f;
 	}
 	else if (OutVT.POV.FOV <= AdsFovThreshold)
 	{
