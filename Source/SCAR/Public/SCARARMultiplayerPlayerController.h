@@ -53,8 +53,23 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void PlayerTick(float DeltaTime) override;
 
 private:
 	UPROPERTY()
 	TObjectPtr<USCARARMultiplayerMenuWidget> MultiplayerMenuWidget;
+
+	// FirstPersonCamera drives its rotation via bUsePawnControlRotation (reads
+	// ControlRotation), while its bLockToHmd flag independently overrides the
+	// camera's own transform straight from the raw ARKit device pose every
+	// frame -- completely bypassing ControlRotation. The FPS arms/weapon IK
+	// aiming, however, is driven by GetControlRotation(), so without this fix
+	// the arms stay aimed wherever ControlRotation last was (effectively
+	// fixed to the screen) while the camera itself freely follows the phone.
+	// We disable bLockToHmd (done once on BeginPlay) and instead drive
+	// ControlRotation directly from a lightly smoothed AR device pose each
+	// tick, so the camera and the arm/weapon IK always read the exact same,
+	// live, jitter-reduced rotation.
+	bool bHasSmoothedARRotation = false;
+	FRotator SmoothedARRotation = FRotator::ZeroRotator;
 };

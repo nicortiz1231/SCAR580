@@ -1,12 +1,21 @@
 #include "SCARARMultiplayerPlayerController.h"
 
+#include "ARBlueprintLibrary.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "HeadMountedDisplayFunctionLibrary.h"
 #include "Kismet/GameplayStatics.h"
 #include "SCARARMultiplayerBlueprintLibrary.h"
 #include "SCARARMultiplayerMenuWidget.h"
 #include "SCARARMultiplayerSlateMenu.h"
 #include "SCARWeaponModdingLauncherSlate.h"
+
+namespace
+{
+	// High but finite -- removes per-frame ARKit sensor noise without adding
+	// perceptible lag to intentional look movement.
+	constexpr float ARRotationSmoothingSpeed = 24.f;
+}
 
 ASCARARMultiplayerPlayerController::ASCARARMultiplayerPlayerController()
 {
@@ -137,6 +146,42 @@ void ASCARARMultiplayerPlayerController::HideMultiplayerMenu()
 		bEnableClickEvents = false;
 		bEnableMouseOverEvents = false;
 	}
+}
+
+void ASCARARMultiplayerPlayerController::PlayerTick(float DeltaTime)
+{
+	Super::PlayerTick(DeltaTime);
+
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	const FARSessionStatus SessionStatus = UARBlueprintLibrary::GetARSessionStatus();
+	if (SessionStatus.Status != EARSessionStatus::Running)
+	{
+		return;
+	}
+
+	FRotator DeviceRotation;
+	FVector DevicePosition;
+	UHeadMountedDisplayFunctionLibrary::GetOrientationAndPosition(DeviceRotation, DevicePosition);
+
+	if (!bHasSmoothedARRotation)
+	{
+		SmoothedARRotation = DeviceRotation;
+		bHasSmoothedARRotation = true;
+	}
+	else
+	{
+		SmoothedARRotation = FMath::RInterpTo(SmoothedARRotation, DeviceRotation, DeltaTime, ARRotationSmoothingSpeed);
+	}
+
+	// FirstPersonCamera and SpringArm both use bUsePawnControlRotation, which
+	// sets their world rotation directly from ControlRotation, and the FPS
+	// arm/weapon IK aim-offset also reads ControlRotation -- so this single
+	// call keeps the camera view and the arms perfectly in sync.
+	SetControlRotation(SmoothedARRotation);
 }
 
 bool ASCARARMultiplayerPlayerController::IsMultiplayerSession(const UObject* WorldContextObject)

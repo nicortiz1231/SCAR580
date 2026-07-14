@@ -4,6 +4,7 @@
 #include "Engine/Engine.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/Controller.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Pawn.h"
 #include "HeadMountedDisplayFunctionLibrary.h"
@@ -205,6 +206,25 @@ void USCARARPoseSyncComponent::ApplyPoseToOwner(const FTransform& Pose, const bo
 		false,
 		nullptr,
 		bTeleport ? ETeleportType::TeleportPhysics : ETeleportType::None);
+
+	// The FPS camera/spring arm use bUsePawnControlRotation, which reads the
+	// Controller's ControlRotation rather than the owning actor's rotation.
+	// On desktop, mouse-look input keeps ControlRotation in sync with the
+	// actor automatically. On a physical AR device there is no such look
+	// input, so without this the camera stays frozen at its last
+	// ControlRotation while the AR passthrough video pans freely -- making
+	// world-space content (like the opponent avatar) appear to be glued to
+	// the camera preview instead of leaving/entering view as the phone turns.
+	if (const APawn* Pawn = Cast<APawn>(Owner))
+	{
+		if (Pawn->IsLocallyControlled())
+		{
+			if (AController* Controller = Pawn->GetController())
+			{
+				Controller->SetControlRotation(Pose.Rotator());
+			}
+		}
+	}
 }
 
 void USCARARPoseSyncComponent::UpdateProxyInterpolation(const float DeltaTime)
