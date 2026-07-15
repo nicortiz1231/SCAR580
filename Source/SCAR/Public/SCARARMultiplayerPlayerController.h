@@ -59,6 +59,12 @@ private:
 	UPROPERTY()
 	TObjectPtr<USCARARMultiplayerMenuWidget> MultiplayerMenuWidget;
 
+	// BP_FPCharacter has no SCS slot for USCARLocalFirstPersonArmsComponent
+	// (it's a marketplace Blueprint asset), so it's attached dynamically here
+	// the same way USCARMultiplayerPresentationComponent dynamically creates
+	// its opponent pose-driver mesh -- no Blueprint editing required.
+	void EnsureLocalFirstPersonArms();
+
 	// FirstPersonCamera drives its rotation via bUsePawnControlRotation (reads
 	// ControlRotation), while its bLockToHmd flag independently overrides the
 	// camera's own transform straight from the raw ARKit device pose every

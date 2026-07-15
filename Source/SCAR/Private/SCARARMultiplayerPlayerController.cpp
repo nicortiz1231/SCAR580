@@ -3,17 +3,25 @@
 #include "ARBlueprintLibrary.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "GameFramework/Pawn.h"
 #include "HeadMountedDisplayFunctionLibrary.h"
 #include "Kismet/GameplayStatics.h"
 #include "SCARARMultiplayerBlueprintLibrary.h"
 #include "SCARARMultiplayerMenuWidget.h"
 #include "SCARARMultiplayerSlateMenu.h"
+#include "SCARLocalFirstPersonArmsComponent.h"
 #include "SCARWeaponModdingLauncherSlate.h"
 
 namespace
 {
-	// High but finite -- removes per-frame ARKit sensor noise without adding
-	// perceptible lag to intentional look movement.
+	// Before AR multiplayer, FirstPersonCamera used bLockToHmd, which fed the
+	// raw ARKit device pose straight into the render camera every frame --
+	// zero Unreal-side smoothing lag at all (ARKit's own internal sensor
+	// fusion is already clean). Switching to ControlRotation (needed so the
+	// arm/weapon IK and multiplayer body orientation share the exact same
+	// value the camera uses, instead of jittering against it) reintroduced a
+	// small amount of lag via this smoothing step. 24 is tuned to be "high
+	// but finite" -- filtering per-frame noise without *feeling* laggy.
 	constexpr float ARRotationSmoothingSpeed = 24.f;
 }
 
@@ -157,6 +165,8 @@ void ASCARARMultiplayerPlayerController::PlayerTick(float DeltaTime)
 		return;
 	}
 
+	EnsureLocalFirstPersonArms();
+
 	const FARSessionStatus SessionStatus = UARBlueprintLibrary::GetARSessionStatus();
 	if (SessionStatus.Status != EARSessionStatus::Running)
 	{
@@ -182,6 +192,22 @@ void ASCARARMultiplayerPlayerController::PlayerTick(float DeltaTime)
 	// arm/weapon IK aim-offset also reads ControlRotation -- so this single
 	// call keeps the camera view and the arms perfectly in sync.
 	SetControlRotation(SmoothedARRotation);
+}
+
+void ASCARARMultiplayerPlayerController::EnsureLocalFirstPersonArms()
+{
+	APawn* Pawn = GetPawn();
+	if (!Pawn || Pawn->FindComponentByClass<USCARLocalFirstPersonArmsComponent>())
+	{
+		return;
+	}
+
+	if (USCARLocalFirstPersonArmsComponent* ArmsComponent =
+			NewObject<USCARLocalFirstPersonArmsComponent>(Pawn, TEXT("SCAR_LocalFirstPersonArms")))
+	{
+		Pawn->AddInstanceComponent(ArmsComponent);
+		ArmsComponent->RegisterComponent();
+	}
 }
 
 bool ASCARARMultiplayerPlayerController::IsMultiplayerSession(const UObject* WorldContextObject)
