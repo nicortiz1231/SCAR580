@@ -61,15 +61,19 @@ void USCARARPoseSyncComponent::TickComponent(
 		FTransform ARPose;
 		if (SampleARPose(ARPose))
 		{
-			CaptureSessionOriginIfNeeded(ARPose);
-			const FTransform RelativePose = LocalSessionOrigin.Inverse() * ARPose;
+			const FTransform BodyPose = BuildMultiplayerBodyPose(ARPose);
+			CaptureSessionOriginIfNeeded(BodyPose);
+			const FTransform RelativePose = LocalSessionOrigin.Inverse() * BodyPose;
 
 			bHasValidARPose = true;
 			ReplicatedARPose = RelativePose;
 
 			if (bDriveOwnerFromARPose)
 			{
-				ApplyPoseToOwner(ARPose, false);
+				// Drive the hidden multiplayer body capsule with sanitized rotation
+				// (no roll / no upside-down flip). Local FP arms are decoupled on
+				// FirstPersonCamera via USCARLocalFirstPersonArmsComponent.
+				ApplyPoseToOwner(BodyPose, false);
 			}
 
 			const double Now = Owner->GetWorld() ? Owner->GetWorld()->GetTimeSeconds() : 0.0;
@@ -84,6 +88,7 @@ void USCARARPoseSyncComponent::TickComponent(
 	else
 	{
 		UpdateRemoteProxyPose(DeltaTime);
+		SyncRemoteVisualizationRotation(Pawn);
 	}
 }
 
@@ -157,9 +162,7 @@ bool USCARARPoseSyncComponent::SampleARPose(FTransform& OutPose) const
 			const_cast<UWorld*>(World));
 		const FTransform DevicePose(DeviceRotation, DevicePosition);
 		const FTransform WorldDevicePose = TrackingToWorld * DevicePose;
-
-		const FVector BodyLocation = WorldDevicePose.TransformPosition(BodyOffsetFromCamera);
-		OutPose = FTransform(WorldDevicePose.Rotator(), BodyLocation);
+		OutPose = WorldDevicePose;
 		return true;
 	}
 
@@ -173,8 +176,7 @@ bool USCARARPoseSyncComponent::SampleARPose(FTransform& OutPose) const
 	FVector ViewLocation;
 	FRotator ViewRotation;
 	PC->GetPlayerViewPoint(ViewLocation, ViewRotation);
-	const FVector BodyLocation = ViewLocation + ViewRotation.RotateVector(BodyOffsetFromCamera);
-	OutPose = FTransform(ViewRotation, BodyLocation);
+	OutPose = FTransform(ViewRotation, ViewLocation);
 	return true;
 }
 
@@ -192,6 +194,37 @@ FTransform USCARARPoseSyncComponent::ComputeWorldPoseFromSessionRelative(const F
 	return GetLocalViewerSessionOrigin(GetWorld()) * RelativePose;
 }
 
+FRotator USCARARPoseSyncComponent::SanitizeMultiplayerBodyRotation(const FRotator& DeviceRotation) const
+{
+	FRotator BodyRotation = DeviceRotation;
+	BodyRotation.Roll = 0.f;
+	BodyRotation.Pitch = FMath::Clamp(
+		BodyRotation.Pitch,
+		-MaxMultiplayerBodyPitchDegrees,
+		MaxMultiplayerBodyPitchDegrees);
+	return BodyRotation.GetNormalized();
+}
+
+FTransform USCARARPoseSyncComponent::BuildMultiplayerBodyPose(const FTransform& DeviceWorldPose) const
+{
+	const FVector BodyLocation = DeviceWorldPose.TransformPosition(BodyOffsetFromCamera);
+	const FRotator BodyRotation = SanitizeMultiplayerBodyRotation(DeviceWorldPose.Rotator());
+	return FTransform(BodyRotation, BodyLocation);
+}
+
+void USCARARPoseSyncComponent::SyncRemoteVisualizationRotation(APawn* Pawn)
+{
+	if (!Pawn || Pawn->IsLocallyControlled() || !bHasValidARPose)
+	{
+		return;
+	}
+
+	if (AController* Controller = Pawn->GetController())
+	{
+		Controller->SetControlRotation(GetCurrentARPose().Rotator());
+	}
+}
+
 void USCARARPoseSyncComponent::ApplyPoseToOwner(const FTransform& Pose, const bool bTeleport)
 {
 	AActor* Owner = GetOwner();
@@ -207,24 +240,10 @@ void USCARARPoseSyncComponent::ApplyPoseToOwner(const FTransform& Pose, const bo
 		nullptr,
 		bTeleport ? ETeleportType::TeleportPhysics : ETeleportType::None);
 
-	// The FPS camera/spring arm use bUsePawnControlRotation, which reads the
-	// Controller's ControlRotation rather than the owning actor's rotation.
-	// On desktop, mouse-look input keeps ControlRotation in sync with the
-	// actor automatically. On a physical AR device there is no such look
-	// input, so without this the camera stays frozen at its last
-	// ControlRotation while the AR passthrough video pans freely -- making
-	// world-space content (like the opponent avatar) appear to be glued to
-	// the camera preview instead of leaving/entering view as the phone turns.
-	if (const APawn* Pawn = Cast<APawn>(Owner))
-	{
-		if (Pawn->IsLocallyControlled())
-		{
-			if (AController* Controller = Pawn->GetController())
-			{
-				Controller->SetControlRotation(Pose.Rotator());
-			}
-		}
-	}
+	// ControlRotation for the local camera + camera-attached FP arms is owned by
+	// ASCARARMultiplayerPlayerController::PlayerTick (smoothed AR device pose).
+	// Writing it here as well raced that path and reintroduced jitter on the
+	// view the local player sees.
 }
 
 void USCARARPoseSyncComponent::UpdateProxyInterpolation(const float DeltaTime)

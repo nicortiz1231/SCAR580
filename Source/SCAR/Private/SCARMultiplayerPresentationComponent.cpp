@@ -13,6 +13,7 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Pawn.h"
 #include "SCARARMultiplayerPlayerController.h"
+#include "SCARARPoseSyncComponent.h"
 #include "UObject/ConstructorHelpers.h"
 #include "UObject/UnrealType.h"
 
@@ -490,7 +491,18 @@ void USCARMultiplayerPresentationComponent::UpdateOpponentViewPlacement()
 	LocalPC->GetPlayerViewPoint(ViewLocation, ViewRotation);
 
 	const FVector FinalLocation = ComputeOpponentViewLocation(Pawn, ViewLocation, ViewRotation);
-	const FRotator TargetRotation(0.f, ViewRotation.Yaw + 180.f, 0.f);
+
+	FRotator TargetRotation(0.f, ViewRotation.Yaw + 180.f, 0.f);
+	if (const USCARARPoseSyncComponent* PoseSync = Pawn->FindComponentByClass<USCARARPoseSyncComponent>())
+	{
+		if (PoseSync->HasValidARPose())
+		{
+			// Sanitized multiplayer body rotation (yaw/pitch, no roll) from the
+			// opponent's replicated AR pose so awkward phone angles do not flip
+			// the visible mannequin upside down.
+			TargetRotation = PoseSync->GetCurrentARPose().Rotator();
+		}
+	}
 
 	Pawn->SetActorLocationAndRotation(FinalLocation, TargetRotation, false, nullptr, ETeleportType::TeleportPhysics);
 

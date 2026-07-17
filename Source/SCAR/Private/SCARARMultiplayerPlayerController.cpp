@@ -187,11 +187,12 @@ void ASCARARMultiplayerPlayerController::PlayerTick(float DeltaTime)
 		SmoothedARRotation = FMath::RInterpTo(SmoothedARRotation, DeviceRotation, DeltaTime, ARRotationSmoothingSpeed);
 	}
 
-	// FirstPersonCamera and SpringArm both use bUsePawnControlRotation, which
-	// sets their world rotation directly from ControlRotation, and the FPS
-	// arm/weapon IK aim-offset also reads ControlRotation -- so this single
-	// call keeps the camera view and the arms perfectly in sync.
-	SetControlRotation(SmoothedARRotation);
+	// Passthrough video rolls with the physical phone, but the rendered FP
+	// arms/camera overlay must stay visually fixed on screen (zero roll). Pitch
+	// and yaw still track where the player is looking for aim/world placement.
+	FRotator ViewRotation = SmoothedARRotation;
+	ViewRotation.Roll = 0.f;
+	SetControlRotation(ViewRotation);
 }
 
 void ASCARARMultiplayerPlayerController::EnsureLocalFirstPersonArms()

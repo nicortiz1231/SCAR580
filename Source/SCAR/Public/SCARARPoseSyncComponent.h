@@ -26,6 +26,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|AR Pose", meta = (ClampMin = "1.0", ClampMax = "30.0"))
 	float ProxyInterpolationSpeed = 12.f;
 
+	/** Max absolute pitch applied to the multiplayer body mannequin. Prevents the
+	 * full-body avatar from flipping when the phone is held at an awkward angle
+	 * (upside down, etc.) while still reflecting look direction via yaw/pitch. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|AR Pose", meta = (ClampMin = "0.0", ClampMax = "89.0"))
+	float MaxMultiplayerBodyPitchDegrees = 75.f;
+
 	UPROPERTY(BlueprintReadOnly, ReplicatedUsing = OnRep_ReplicatedARPose, Category = "SCAR|AR Pose")
 	FTransform ReplicatedARPose = FTransform::Identity;
 
@@ -56,6 +62,9 @@ private:
 	void ApplyPoseToOwner(const FTransform& Pose, bool bTeleport);
 	void UpdateProxyInterpolation(float DeltaTime);
 	void UpdateRemoteProxyPose(float DeltaTime);
+	void SyncRemoteVisualizationRotation(APawn* Pawn);
+	FTransform BuildMultiplayerBodyPose(const FTransform& DeviceWorldPose) const;
+	FRotator SanitizeMultiplayerBodyRotation(const FRotator& DeviceRotation) const;
 
 	bool bHasValidARPose = false;
 	bool bHasLocalSessionOrigin = false;

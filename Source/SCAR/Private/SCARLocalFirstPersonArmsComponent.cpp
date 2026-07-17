@@ -1,19 +1,21 @@
 #include "SCARLocalFirstPersonArmsComponent.h"
 
+#include "ARBlueprintLibrary.h"
+#include "Camera/CameraComponent.h"
 #include "Components/SkeletalMeshComponent.h"
-#include "GameFramework/Controller.h"
+#include "GameFramework/SpringArmComponent.h"
+#include "Engine/Engine.h"
+#include "GameFramework/Actor.h"
 #include "GameFramework/Pawn.h"
+#include "UObject/UnrealType.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSCARLocalArms, Log, All);
 
 USCARLocalFirstPersonArmsComponent::USCARLocalFirstPersonArmsComponent()
 {
-	// TG_PostUpdateWork runs after every other actor's default TG_PrePhysics
-	// tick (where the character Blueprint's own aim/procedural-animation
-	// logic writes CharacterMesh0's Pitch/Yaw each frame) has already
-	// completed for this frame -- so our Roll write here always sticks.
 	PrimaryComponentTick.bCanEverTick = true;
-	PrimaryComponentTick.TickGroup = TG_PostUpdateWork;
+	// Run after Bodycam procedural ADS / aim logic has written mesh transforms.
+	PrimaryComponentTick.TickGroup = TG_LastDemotable;
 }
 
 void USCARLocalFirstPersonArmsComponent::BeginPlay()
@@ -26,37 +28,173 @@ void USCARLocalFirstPersonArmsComponent::BeginPlay()
 	}
 }
 
+bool USCARLocalFirstPersonArmsComponent::IsARRunning() const
+{
+	const FARSessionStatus SessionStatus = UARBlueprintLibrary::GetARSessionStatus();
+	return SessionStatus.Status == EARSessionStatus::Running;
+}
+
 void USCARLocalFirstPersonArmsComponent::TrySetup(APawn* Pawn)
 {
-	if (!Pawn || !Pawn->IsLocallyControlled())
+	if (!Pawn || !Pawn->IsLocallyControlled() || bLocalViewConfigured)
 	{
 		return;
 	}
 
-	if (!CachedBodyMesh)
+	if (!CachedFirstPersonCamera)
 	{
-		CachedBodyMesh = FindMeshByExactName(Pawn, ThirdPersonMeshComponentName);
+		CachedFirstPersonCamera = FindFirstPersonCamera(Pawn);
 	}
 
-	if (!CachedBodyMesh || bLegsHidden)
+	if (!CachedSpringArm)
+	{
+		CachedSpringArm = FindSpringArm(Pawn);
+	}
+
+	if (!CachedFirstPersonMesh)
+	{
+		CachedFirstPersonMesh = FindMeshByExactName(Pawn, FirstPersonMeshComponentName);
+	}
+
+	if (!CachedThirdPersonMesh)
+	{
+		CachedThirdPersonMesh = FindMeshByExactName(Pawn, ThirdPersonMeshComponentName);
+	}
+
+	if (!CachedFirstPersonCamera || !CachedFirstPersonMesh)
 	{
 		return;
 	}
 
-	for (const FName& BoneName : LegBonesToHide)
+	ConfigureLocalView(Pawn);
+	bLocalViewConfigured = true;
+	UE_LOG(
+		LogSCARLocalArms,
+		Log,
+		TEXT("Configured camera-locked FP arms on %s (FP=%s relLoc=%s relRot=%s)"),
+		*Pawn->GetName(),
+		*CachedFirstPersonMesh->GetName(),
+		*CameraAttachRelativeLocation.ToString(),
+		*CameraAttachRelativeRotation.ToString());
+}
+
+void USCARLocalFirstPersonArmsComponent::ConfigureLocalView(APawn* Pawn)
+{
+	ConfigureSpringArmForAR();
+	DisableCameraLookSwayForAR(Pawn);
+	EnsureFirstPersonMeshOnCamera(Pawn);
+	ConfigureMultiplayerBodyMesh(Pawn);
+}
+
+void USCARLocalFirstPersonArmsComponent::ConfigureSpringArmForAR()
+{
+	if (!CachedSpringArm || !IsARRunning() || bSpringArmConfiguredForAR)
 	{
-		if (CachedBodyMesh->GetBoneIndex(BoneName) != INDEX_NONE)
-		{
-			CachedBodyMesh->HideBoneByName(BoneName, EPhysBodyOp::PBO_None);
-		}
-		else
-		{
-			UE_LOG(LogSCARLocalArms, Warning, TEXT("Leg bone '%s' not found on %s"), *BoneName.ToString(), *CachedBodyMesh->GetName());
-		}
+		return;
 	}
 
-	bLegsHidden = true;
-	UE_LOG(LogSCARLocalArms, Log, TEXT("Hid local player's leg bones on %s"), *Pawn->GetName());
+	// Keep pitch/yaw tracking for aim, but strip roll so FP arms stay upright on
+	// screen while the AR passthrough alone tilts with the physical phone.
+	CachedSpringArm->bUsePawnControlRotation = true;
+	CachedSpringArm->bInheritPitch = true;
+	CachedSpringArm->bInheritYaw = true;
+	CachedSpringArm->bInheritRoll = false;
+	CachedSpringArm->bEnableCameraLag = false;
+	CachedSpringArm->bEnableCameraRotationLag = false;
+
+	if (CachedFirstPersonCamera)
+	{
+		CachedFirstPersonCamera->bUsePawnControlRotation = true;
+	}
+
+	bSpringArmConfiguredForAR = true;
+}
+
+void USCARLocalFirstPersonArmsComponent::DisableCameraLookSwayForAR(APawn* Pawn)
+{
+	if (!Pawn || !IsARRunning() || bCameraLookSwayDisabled)
+	{
+		return;
+	}
+
+	for (UActorComponent* Component : Pawn->GetComponents())
+	{
+		if (!Component || !Component->GetClass()->GetName().Contains(TEXT("ProceduralAnimation")))
+		{
+			continue;
+		}
+
+		if (FProperty* SwayProperty = Component->GetClass()->FindPropertyByName(TEXT("MouseSwayAmplitude")))
+		{
+			if (FStructProperty* StructProperty = CastField<FStructProperty>(SwayProperty))
+			{
+				if (StructProperty->Struct == TBaseStructure<FVector>::Get())
+				{
+					*StructProperty->ContainerPtrToValuePtr<FVector>(Component) = FVector::ZeroVector;
+					bCameraLookSwayDisabled = true;
+					UE_LOG(LogSCARLocalArms, Log, TEXT("Zeroed MouseSwayAmplitude on %s for AR"), *Component->GetName());
+					return;
+				}
+			}
+		}
+	}
+}
+
+void USCARLocalFirstPersonArmsComponent::EnsureFirstPersonMeshOnCamera(APawn* Pawn)
+{
+	if (!Pawn || !CachedFirstPersonCamera || !CachedFirstPersonMesh)
+	{
+		return;
+	}
+
+	const bool bNeedsAttach = CachedFirstPersonMesh->GetAttachParent() != CachedFirstPersonCamera;
+	if (bNeedsAttach)
+	{
+		CachedFirstPersonMesh->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
+		CachedFirstPersonMesh->AttachToComponent(
+			CachedFirstPersonCamera,
+			FAttachmentTransformRules::KeepRelativeTransform);
+
+		CameraAttachRelativeLocation = CachedFirstPersonMesh->GetRelativeLocation();
+		CameraAttachRelativeRotation = CachedFirstPersonMesh->GetRelativeRotation();
+		CameraAttachRelativeScale = CachedFirstPersonMesh->GetRelativeScale3D();
+	}
+
+	CachedFirstPersonMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	CachedFirstPersonMesh->SetHiddenInGame(false);
+	CachedFirstPersonMesh->SetVisibility(true, true);
+	CachedFirstPersonMesh->SetOwnerNoSee(false);
+	CachedFirstPersonMesh->SetOnlyOwnerSee(true);
+	CachedFirstPersonMesh->SetCastHiddenShadow(false);
+	CachedFirstPersonMesh->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::FirstPerson);
+}
+
+void USCARLocalFirstPersonArmsComponent::LockFirstPersonMeshToCamera()
+{
+	if (!CachedFirstPersonCamera || !CachedFirstPersonMesh)
+	{
+		return;
+	}
+
+	// Bodycam ADS writes component pitch/offset each frame. Reset it so the
+	// mesh stays fixed to the camera; ADS pose continues via bone animation.
+	CachedFirstPersonMesh->SetRelativeLocation(CameraAttachRelativeLocation);
+	CachedFirstPersonMesh->SetRelativeRotation(CameraAttachRelativeRotation);
+	CachedFirstPersonMesh->SetRelativeScale3D(CameraAttachRelativeScale);
+}
+
+void USCARLocalFirstPersonArmsComponent::ConfigureMultiplayerBodyMesh(APawn* Pawn)
+{
+	if (!CachedThirdPersonMesh)
+	{
+		return;
+	}
+
+	CachedThirdPersonMesh->SetHiddenInGame(false);
+	CachedThirdPersonMesh->SetVisibility(true, true);
+	CachedThirdPersonMesh->SetOwnerNoSee(true);
+	CachedThirdPersonMesh->SetOnlyOwnerSee(false);
+	CachedThirdPersonMesh->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::WorldSpaceRepresentation);
 }
 
 void USCARLocalFirstPersonArmsComponent::TickComponent(
@@ -72,49 +210,81 @@ void USCARLocalFirstPersonArmsComponent::TickComponent(
 		return;
 	}
 
-	if (!bLegsHidden)
+	if (!bLocalViewConfigured)
 	{
 		TrySetup(Pawn);
 	}
 
-	ApplyRoll(Pawn);
+	if (!bLocalViewConfigured)
+	{
+		return;
+	}
+
+	if (IsARRunning())
+	{
+		if (!bSpringArmConfiguredForAR)
+		{
+			ConfigureSpringArmForAR();
+		}
+
+		if (!bCameraLookSwayDisabled)
+		{
+			DisableCameraLookSwayForAR(Pawn);
+		}
+	}
+
+	EnsureFirstPersonMeshOnCamera(Pawn);
+	LockFirstPersonMeshToCamera();
 }
 
-void USCARLocalFirstPersonArmsComponent::ApplyRoll(const APawn* Pawn)
+UCameraComponent* USCARLocalFirstPersonArmsComponent::FindFirstPersonCamera(const APawn* Pawn) const
 {
-	const AController* PawnController = Pawn->GetController();
-	if (!PawnController || !CachedBodyMesh)
+	if (!Pawn)
 	{
-		return;
+		return nullptr;
 	}
 
-	// Undo whatever Roll delta we injected last frame *before* reading the
-	// mesh's current world rotation, so this never compounds across frames
-	// regardless of whether the character Blueprint resets Roll to 0 on its
-	// own each tick.
-	if (!LastAppliedRollDeltaQuat.Equals(FQuat::Identity, 0.0001f))
+	TArray<UCameraComponent*> Cameras;
+	Pawn->GetComponents<UCameraComponent>(Cameras);
+
+	for (UCameraComponent* Camera : Cameras)
 	{
-		const FQuat UndoneWorldQuat = LastAppliedRollDeltaQuat.Inverse() * CachedBodyMesh->GetComponentQuat();
-		CachedBodyMesh->SetWorldRotation(UndoneWorldQuat);
-		LastAppliedRollDeltaQuat = FQuat::Identity;
+		if (Camera && Camera->GetName() == FirstPersonCameraComponentName.ToString())
+		{
+			return Camera;
+		}
 	}
 
-	const FRotator ControlRot = PawnController->GetControlRotation();
-	if (FMath::IsNearlyZero(ControlRot.Roll, 0.01f))
+	for (UCameraComponent* Camera : Cameras)
 	{
-		return;
+		if (Camera && Camera->GetName().Contains(TEXT("FirstPersonCamera")))
+		{
+			return Camera;
+		}
 	}
 
-	// Isolate just the Roll contribution as a clean world-space quaternion
-	// delta (see header comment for why this can't be done by writing the
-	// FRotator.Roll field directly once Pitch is non-zero).
-	FRotator ZeroRollControlRot = ControlRot;
-	ZeroRollControlRot.Roll = 0.f;
-	const FQuat RollDeltaQuat = ControlRot.Quaternion() * ZeroRollControlRot.Quaternion().Inverse();
+	return Cameras.Num() > 0 ? Cameras[0] : nullptr;
+}
 
-	const FQuat NewWorldQuat = RollDeltaQuat * CachedBodyMesh->GetComponentQuat();
-	CachedBodyMesh->SetWorldRotation(NewWorldQuat);
-	LastAppliedRollDeltaQuat = RollDeltaQuat;
+USpringArmComponent* USCARLocalFirstPersonArmsComponent::FindSpringArm(const APawn* Pawn) const
+{
+	if (!Pawn)
+	{
+		return nullptr;
+	}
+
+	TArray<USpringArmComponent*> SpringArms;
+	Pawn->GetComponents<USpringArmComponent>(SpringArms);
+
+	for (USpringArmComponent* SpringArm : SpringArms)
+	{
+		if (SpringArm && SpringArm->GetName() == SpringArmComponentName.ToString())
+		{
+			return SpringArm;
+		}
+	}
+
+	return SpringArms.Num() > 0 ? SpringArms[0] : nullptr;
 }
 
 USkeletalMeshComponent* USCARLocalFirstPersonArmsComponent::FindMeshByExactName(
