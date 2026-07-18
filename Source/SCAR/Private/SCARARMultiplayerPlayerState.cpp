@@ -13,6 +13,28 @@ void ASCARARMultiplayerPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeP
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(ASCARARMultiplayerPlayerState, Kills);
 	DOREPLIFETIME(ASCARARMultiplayerPlayerState, Deaths);
+	DOREPLIFETIME(ASCARARMultiplayerPlayerState, HeldWeaponMeshPath);
+	DOREPLIFETIME(ASCARARMultiplayerPlayerState, EquippedWeaponId);
+	DOREPLIFETIME(ASCARARMultiplayerPlayerState, bAvatarAiming);
+	DOREPLIFETIME(ASCARARMultiplayerPlayerState, HeldWeaponAttachSocket);
+	DOREPLIFETIME(ASCARARMultiplayerPlayerState, HeldWeaponRelativeLocation);
+	DOREPLIFETIME(ASCARARMultiplayerPlayerState, HeldWeaponRelativeRotation);
+}
+
+void ASCARARMultiplayerPlayerState::Server_UpdateAvatarLoadout_Implementation(
+	const FString& WeaponMeshPath,
+	const uint8 WeaponId,
+	const bool bAiming,
+	const FName AttachSocket,
+	const FVector RelativeLocation,
+	const FRotator RelativeRotation)
+{
+	HeldWeaponMeshPath = WeaponMeshPath;
+	EquippedWeaponId = WeaponId;
+	bAvatarAiming = bAiming;
+	HeldWeaponAttachSocket = AttachSocket;
+	HeldWeaponRelativeLocation = RelativeLocation;
+	HeldWeaponRelativeRotation = RelativeRotation;
 }
 
 void ASCARARMultiplayerPlayerState::RegisterKill()

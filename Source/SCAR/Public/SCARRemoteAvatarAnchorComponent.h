@@ -5,6 +5,7 @@
 #include "SCARRemoteAvatarAnchorComponent.generated.h"
 
 class APawn;
+class USkeletalMeshComponent;
 
 /**
  * Lives on the LOCAL player controller (attached dynamically by
@@ -15,19 +16,17 @@ class APawn;
  * is that every world-anchored actor, including remote players' avatars,
  * appears glued to the screen too and visually rotates with the phone.
  *
- * Each frame this component counter-rotates remote player pawns around the
- * local camera's view axis by exactly the roll the camera ignored, so their
- * avatars stay anchored to the real world seen in the AR passthrough -- like
- * a real subject filmed by a rolling camera. Purely local: nothing replicated
- * is modified, and the local camera / FP arms pipeline is untouched.
+ * Each frame this component counter-rotates remote player avatars around the
+ * local camera's view axis by exactly the roll the camera ignored, so they
+ * stay anchored to the real world seen in the AR passthrough -- like a real
+ * subject filmed by a rolling camera.
  *
- * Runs in TG_LastDemotable, after replication, character movement, and
- * gameplay ticks have written pawn transforms for the frame. Per pawn it
- * remembers both the un-rolled base pose and the rolled pose it wrote last
- * frame: if nothing else moved the pawn since, the remembered base is reused;
- * if another system did move it (replication update, movement simulation),
- * that fresh pose becomes the new base. Either way the roll is applied to an
- * un-rolled pose exactly once per frame and can never compound.
+ * The counter-roll is applied to the avatar's visible BODY MESH component,
+ * never to the pawn actor itself. The pawn transform stays fully owned by
+ * replication / character movement, so there is no state to re-base and no
+ * feedback loop to fight: every frame the desired mesh world transform is
+ * recomputed statelessly from (replicated pawn transform) x (the mesh's
+ * default relative transform) x (counter-roll about the camera axis).
  */
 UCLASS(ClassGroup = (SCAR))
 class SCAR_API USCARRemoteAvatarAnchorComponent : public UActorComponent
@@ -37,6 +36,10 @@ class SCAR_API USCARRemoteAvatarAnchorComponent : public UActorComponent
 public:
 	USCARRemoteAvatarAnchorComponent();
 
+	/** Body mesh (full-body avatar other players see) component name. */
+	UPROPERTY(EditAnywhere, Category = "SCAR|AvatarAnchor")
+	FName BodyMeshComponentName = TEXT("CharacterMesh0");
+
 protected:
 	virtual void TickComponent(
 		float DeltaTime,
@@ -44,13 +47,14 @@ protected:
 		FActorComponentTickFunction* ThisTickFunction) override;
 
 private:
-	struct FAnchorState
+	struct FMeshAnchorState
 	{
-		FTransform BaseWorld = FTransform::Identity;
-		FTransform LastSetWorld = FTransform::Identity;
+		TWeakObjectPtr<USkeletalMeshComponent> Mesh;
+		FTransform DefaultRelative = FTransform::Identity;
 	};
 
-	void RestoreAnchoredPawns();
+	USkeletalMeshComponent* FindBodyMesh(APawn* Pawn) const;
+	void RestoreAnchoredMeshes();
 
-	TMap<TWeakObjectPtr<APawn>, FAnchorState> AnchoredPawns;
+	TMap<TWeakObjectPtr<APawn>, FMeshAnchorState> AnchoredMeshes;
 };

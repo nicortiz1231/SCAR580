@@ -69,6 +69,10 @@ private:
 	// avatars stay anchored to the real world when the local phone rolls.
 	void EnsureRemoteAvatarAnchor();
 
+	// Attaches USCARAvatarWeaponSyncComponent to this controller so remote
+	// avatars visibly hold the weapon their player actually has equipped.
+	void EnsureAvatarWeaponSync();
+
 	// FirstPersonCamera drives its rotation via bUsePawnControlRotation (reads
 	// ControlRotation), while its bLockToHmd flag independently overrides the
 	// camera's own transform straight from the raw ARKit device pose every
