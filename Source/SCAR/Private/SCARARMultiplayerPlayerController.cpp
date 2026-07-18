@@ -10,6 +10,7 @@
 #include "SCARARMultiplayerMenuWidget.h"
 #include "SCARARMultiplayerSlateMenu.h"
 #include "SCARLocalFirstPersonArmsComponent.h"
+#include "SCARRemoteAvatarAnchorComponent.h"
 #include "SCARWeaponModdingLauncherSlate.h"
 
 namespace
@@ -166,6 +167,7 @@ void ASCARARMultiplayerPlayerController::PlayerTick(float DeltaTime)
 	}
 
 	EnsureLocalFirstPersonArms();
+	EnsureRemoteAvatarAnchor();
 
 	const FARSessionStatus SessionStatus = UARBlueprintLibrary::GetARSessionStatus();
 	if (SessionStatus.Status != EARSessionStatus::Running)
@@ -208,6 +210,21 @@ void ASCARARMultiplayerPlayerController::EnsureLocalFirstPersonArms()
 	{
 		Pawn->AddInstanceComponent(ArmsComponent);
 		ArmsComponent->RegisterComponent();
+	}
+}
+
+void ASCARARMultiplayerPlayerController::EnsureRemoteAvatarAnchor()
+{
+	if (FindComponentByClass<USCARRemoteAvatarAnchorComponent>())
+	{
+		return;
+	}
+
+	if (USCARRemoteAvatarAnchorComponent* AnchorComponent =
+			NewObject<USCARRemoteAvatarAnchorComponent>(this, TEXT("SCAR_RemoteAvatarAnchor")))
+	{
+		AddInstanceComponent(AnchorComponent);
+		AnchorComponent->RegisterComponent();
 	}
 }
 

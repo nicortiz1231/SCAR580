@@ -65,6 +65,10 @@ private:
 	// its opponent pose-driver mesh -- no Blueprint editing required.
 	void EnsureLocalFirstPersonArms();
 
+	// Attaches USCARRemoteAvatarAnchorComponent to this controller so remote
+	// avatars stay anchored to the real world when the local phone rolls.
+	void EnsureRemoteAvatarAnchor();
+
 	// FirstPersonCamera drives its rotation via bUsePawnControlRotation (reads
 	// ControlRotation), while its bLockToHmd flag independently overrides the
 	// camera's own transform straight from the raw ARKit device pose every

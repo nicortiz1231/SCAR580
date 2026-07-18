@@ -24,3 +24,12 @@ CrashReportClient/
 # Local build output and script logs
 Build/
 Scripts/*.log
+
+# Cesium local tile cache (multi-GB, regenerated automatically)
+cesium-request-cache.sqlite
+
+# Python bytecode
+__pycache__/
+
+# Cesium prebuilt Windows libs exceed GitHub's 100MB file limit (project targets Mac/iOS)
+Plugins/CesiumForUnreal/Source/ThirdParty/lib/Windows-AMD64-Release/
