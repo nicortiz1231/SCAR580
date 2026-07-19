@@ -253,7 +253,21 @@ void USCARMultiplayerPresentationComponent::EnsurePawnEquippedGunSetForOpponentV
 			}
 			if (PistolValue == INDEX_NONE)
 			{
-				PistolValue = 1;
+				// UserDefinedEnum entries are NewEnumeratorN; match display name.
+				for (int32 Index = 0; Index < Enum->NumEnums() - 1; ++Index)
+				{
+					if (Enum->GetDisplayNameTextByIndex(Index).ToString().Equals(
+							TEXT("Pistol"), ESearchCase::IgnoreCase))
+					{
+						PistolValue = Enum->GetValueByIndex(Index);
+						break;
+					}
+				}
+			}
+			if (PistolValue == INDEX_NONE)
+			{
+				// ENUM_Animset: 0=Pistol, 1=Rifle, ... 6=Hands (fist pose).
+				PistolValue = 0;
 			}
 
 			EnumProperty->GetUnderlyingProperty()->SetIntPropertyValue(
@@ -263,7 +277,7 @@ void USCARMultiplayerPresentationComponent::EnsurePawnEquippedGunSetForOpponentV
 	}
 	else if (FByteProperty* ByteProperty = CastField<FByteProperty>(EquippedGunSetProperty))
 	{
-		ByteProperty->SetPropertyValue_InContainer(Pawn, static_cast<uint8>(1));
+		ByteProperty->SetPropertyValue_InContainer(Pawn, static_cast<uint8>(0));
 	}
 }
 
@@ -300,7 +314,7 @@ void USCARMultiplayerPresentationComponent::RefreshPresentation()
 	OpponentPoseDriverMeshComponent = EnsurePoseDriverMesh(Pawn);
 	OpponentMannequinMeshComponent = FindMeshByExactName(Pawn, ThirdPersonMeshComponentName);
 
-	// FP arms must be configured first — ABP_Mirror reads this pose for the visible mannequin.
+	// Pose-driver mesh stays hidden; visible mannequin uses ABP_Manny (organic look/turn).
 	if (OpponentPoseDriverMeshComponent)
 	{
 		ConfigureFpPoseDriver(Pawn, OpponentPoseDriverMeshComponent);
@@ -310,7 +324,8 @@ void USCARMultiplayerPresentationComponent::RefreshPresentation()
 	{
 		ConfigureMirroredMannequin(OpponentMannequinMeshComponent);
 		ReinitializeMirrorAnimIfNeeded(OpponentMannequinMeshComponent);
-		EnsureOpponentWeaponOnMannequin(Pawn, OpponentMannequinMeshComponent);
+		// Weapon mesh + ADS arm pose are owned by USCARAvatarWeaponSyncComponent.
+		// Attaching a second pistol here caused the floating hip/ghost weapons.
 	}
 
 	if (UCapsuleComponent* Capsule = Pawn->FindComponentByClass<UCapsuleComponent>())
@@ -419,11 +434,16 @@ void USCARMultiplayerPresentationComponent::ConfigureMirroredMannequin(USkeletal
 		}
 	}
 
-	if (TSubclassOf<UAnimInstance> MirrorClass = ResolveOpponentMirrorAnimClass())
+	// Keep ABP_Manny. ABP_Mirror is a frozen Sequence Evaluator with no look /
+	// turn / locomotion. Manny already upper-body-blends weapon holds via its
+	// EquippedAnimset enum and UpperBody slot.
+	static const TCHAR* MannyAnimBP =
+		TEXT("/Game/BodycamFPSKIT/Demo/Character/Mannequins/Animations/ABP_Manny.ABP_Manny_C");
+	if (TSubclassOf<UAnimInstance> MannyClass = LoadClass<UAnimInstance>(nullptr, MannyAnimBP))
 	{
-		if (MannequinMesh->GetAnimClass() != MirrorClass)
+		if (MannequinMesh->GetAnimClass() != MannyClass)
 		{
-			MannequinMesh->SetAnimInstanceClass(MirrorClass);
+			MannequinMesh->SetAnimInstanceClass(MannyClass);
 		}
 	}
 
@@ -497,10 +517,9 @@ void USCARMultiplayerPresentationComponent::UpdateOpponentViewPlacement()
 	{
 		if (PoseSync->HasValidARPose())
 		{
-			// Sanitized multiplayer body rotation (yaw/pitch, no roll) from the
-			// opponent's replicated AR pose so awkward phone angles do not flip
-			// the visible mannequin upside down.
-			TargetRotation = PoseSync->GetCurrentARPose().Rotator();
+			// Yaw only — look pitch is driven by SetRemoteViewPitch into ABP_Manny.
+			const FRotator Aim = PoseSync->GetCurrentARPose().Rotator();
+			TargetRotation = FRotator(0.f, Aim.Yaw, 0.f);
 		}
 	}
 
@@ -512,7 +531,9 @@ void USCARMultiplayerPresentationComponent::UpdateOpponentViewPlacement()
 		{
 			Movement->StopMovementImmediately();
 			Movement->Velocity = FVector::ZeroVector;
-			Movement->SetMovementMode(MOVE_Walking);
+			// Flying mode for placement; look pitch is AnimBP RemoteViewPitch, not capsule tip.
+			Movement->GravityScale = 0.f;
+			Movement->SetMovementMode(MOVE_Flying);
 		}
 	}
 }

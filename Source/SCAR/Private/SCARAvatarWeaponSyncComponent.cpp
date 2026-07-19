@@ -2,6 +2,7 @@
 
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimSequenceBase.h"
+#include "Animation/AnimationAsset.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/World.h"
@@ -10,6 +11,7 @@
 #include "GameFramework/Pawn.h"
 #include "SCARARMultiplayerPlayerState.h"
 #include "UObject/ConstructorHelpers.h"
+#include "UObject/EnumProperty.h"
 #include "UObject/SoftObjectPath.h"
 #include "UObject/UnrealType.h"
 
@@ -67,6 +69,23 @@ namespace
 		return false;
 	}
 
+	bool GetFloatProperty(UObject* Object, const FName PropertyName, float& OutValue)
+	{
+		if (!Object)
+		{
+			return false;
+		}
+
+		if (const FFloatProperty* Property =
+				CastField<FFloatProperty>(Object->GetClass()->FindPropertyByName(PropertyName)))
+		{
+			OutValue = Property->GetPropertyValue_InContainer(Object);
+			return true;
+		}
+
+		return false;
+	}
+
 	void SetByteProperty(UObject* Object, const FName PropertyName, const uint8 Value)
 	{
 		if (!Object)
@@ -74,10 +93,23 @@ namespace
 			return;
 		}
 
-		if (const FByteProperty* Property =
-				CastField<FByteProperty>(Object->GetClass()->FindPropertyByName(PropertyName)))
+		FProperty* Property = Object->GetClass()->FindPropertyByName(PropertyName);
+		if (!Property)
 		{
-			Property->SetPropertyValue_InContainer(Object, Value);
+			return;
+		}
+
+		if (const FByteProperty* ByteProperty = CastField<FByteProperty>(Property))
+		{
+			ByteProperty->SetPropertyValue_InContainer(Object, Value);
+			return;
+		}
+
+		if (const FEnumProperty* EnumProperty = CastField<FEnumProperty>(Property))
+		{
+			EnumProperty->GetUnderlyingProperty()->SetIntPropertyValue(
+				EnumProperty->ContainerPtrToValuePtr<void>(Object),
+				static_cast<int64>(Value));
 		}
 	}
 
@@ -94,6 +126,52 @@ namespace
 			Property->SetPropertyValue_InContainer(Object, bValue);
 		}
 	}
+
+	void ForceAnimsetProperty(UObject* Object, const uint8 AnimsetValue)
+	{
+		if (!Object)
+		{
+			return;
+		}
+
+		for (TFieldIterator<FProperty> It(Object->GetClass()); It; ++It)
+		{
+			FProperty* Property = *It;
+			if (!Property)
+			{
+				continue;
+			}
+
+			const FString PropertyName = Property->GetName();
+			const bool bLooksLikeAnimset =
+				PropertyName.Contains(TEXT("Animset"), ESearchCase::IgnoreCase) ||
+				PropertyName.Contains(TEXT("GunSet"), ESearchCase::IgnoreCase);
+			if (!bLooksLikeAnimset)
+			{
+				continue;
+			}
+
+			if (FEnumProperty* EnumProperty = CastField<FEnumProperty>(Property))
+			{
+				EnumProperty->GetUnderlyingProperty()->SetIntPropertyValue(
+					EnumProperty->ContainerPtrToValuePtr<void>(Object),
+					static_cast<int64>(AnimsetValue));
+			}
+			else if (FByteProperty* ByteProperty = CastField<FByteProperty>(Property))
+			{
+				ByteProperty->SetPropertyValue_InContainer(Object, AnimsetValue);
+			}
+		}
+	}
+
+	static const TCHAR* DefaultPistolMeshPath =
+		TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Pistol/Weapon/SKM_Pistol.SKM_Pistol");
+
+	constexpr uint8 AnimsetPistol = 0;
+	constexpr uint8 AnimsetRifle = 1;
+	constexpr uint8 AnimsetShotgun = 2;
+	constexpr uint8 AnimsetSniper = 3;
+	constexpr uint8 AnimsetHands = 7;
 
 	USkeletalMeshComponent* FindItemMeshOnActor(const AActor* Actor)
 	{
@@ -115,16 +193,8 @@ namespace
 		return nullptr;
 	}
 
-	// Full-body true-FPS hold animations. Pistol uses a generated ADS variant
-	// of the kit's idle (Scripts/make_pistol_ads_anim.py): same grip and aim
-	// orientation, but arms IK-extended forward. Others are kit anims on
-	// SK_Mannequin, the same skeleton as the SKM_Manny avatar body.
-	const TCHAR* ResolveHoldAnimPath(const FString& WeaponMeshPath)
+	const TCHAR* ResolveHoldAnimPath(const FString& WeaponMeshPath, const bool bAiming)
 	{
-		if (WeaponMeshPath.Contains(TEXT("Pistol")))
-		{
-			return TEXT("/Game/SCAR580/Animations/Anim_Arms_Pistol_ADS.Anim_Arms_Pistol_ADS");
-		}
 		if (WeaponMeshPath.Contains(TEXT("Rifle")))
 		{
 			return TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Rifle/Anim_Arms_AmericanRifle_Pose.Anim_Arms_AmericanRifle_Pose");
@@ -138,34 +208,98 @@ namespace
 			return TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Sniper/Anim_Arms_Sniper__Idle.Anim_Arms_Sniper__Idle");
 		}
 
-		// Knife/grenade/unknown: default to the pistol hold rather than the
-		// unarmed boxing idle so the item is at least gripped believably.
-		return TEXT("/Game/SCAR580/Animations/Anim_Arms_Pistol_ADS.Anim_Arms_Pistol_ADS");
+		if (bAiming)
+		{
+			return TEXT("/Game/SCAR580/Animations/Anim_Arms_Pistol_ADS.Anim_Arms_Pistol_ADS");
+		}
+
+		return TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Pistol/Anim_Arms_Pistol_Idle.Anim_Arms_Pistol_Idle");
+	}
+
+	const TCHAR* ResolveActionAnimPath(const FString& WeaponMeshPath, const ESCARAvatarAnimAction Action)
+	{
+		const bool bPistol = WeaponMeshPath.IsEmpty() || WeaponMeshPath.Contains(TEXT("Pistol"));
+		const bool bRifle = WeaponMeshPath.Contains(TEXT("Rifle"));
+		const bool bShotgun = WeaponMeshPath.Contains(TEXT("Shotgun"));
+		const bool bSniper = WeaponMeshPath.Contains(TEXT("Sniper"));
+
+		switch (Action)
+		{
+		case ESCARAvatarAnimAction::Fire:
+			if (bRifle)
+			{
+				return TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Rifle/Anim_Arms_AmericanRifle_Fire.Anim_Arms_AmericanRifle_Fire");
+			}
+			if (bShotgun)
+			{
+				return TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Shotgun/Anim_Arms_Shotgun_Fire.Anim_Arms_Shotgun_Fire");
+			}
+			if (bSniper)
+			{
+				return TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Sniper/Anim_Arms_Sniper_Fire.Anim_Arms_Sniper_Fire");
+			}
+			return TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Pistol/Anim_Arms_Pistol_Fire.Anim_Arms_Pistol_Fire");
+
+		case ESCARAvatarAnimAction::ReloadEmpty:
+			if (bPistol || (!bRifle && !bShotgun && !bSniper))
+			{
+				return TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Pistol/Anim_Arms_Pistol_ReloadEmpty.Anim_Arms_Pistol_ReloadEmpty");
+			}
+			// fall through
+		case ESCARAvatarAnimAction::Reload:
+			if (bRifle)
+			{
+				return TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Rifle/Anim_Arms_AmericanRifle_Reload.Anim_Arms_AmericanRifle_Reload");
+			}
+			if (bShotgun)
+			{
+				return TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Shotgun/Anim_Arms_Shotgun_Reload.Anim_Arms_Shotgun_Reload");
+			}
+			if (bSniper)
+			{
+				return TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Sniper/Anim_Arms_Sniper_Reload.Anim_Arms_Sniper_Reload");
+			}
+			return TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Pistol/Anim_Arms_Pistol_Reload.Anim_Arms_Pistol_Reload");
+
+		default:
+			return nullptr;
+		}
 	}
 }
 
 USCARAvatarWeaponSyncComponent::USCARAvatarWeaponSyncComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
-	// After gameplay/anim ticks so stance variables written here are stable
-	// for next frame's anim evaluation and never race the kit's own logic.
-	PrimaryComponentTick.TickGroup = TG_PostUpdateWork;
+	PrimaryComponentTick.TickGroup = TG_PrePhysics;
 
-	// Hard-reference the hold animations so they are always cooked into
-	// device builds even though gameplay only loads them by path.
-	static const TCHAR* HoldAnimPaths[] = {
+	static const TCHAR* PrecachePaths[] = {
+		TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Pistol/Anim_Arms_Pistol_Idle.Anim_Arms_Pistol_Idle"),
 		TEXT("/Game/SCAR580/Animations/Anim_Arms_Pistol_ADS.Anim_Arms_Pistol_ADS"),
+		TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Pistol/Anim_Arms_Pistol_Fire.Anim_Arms_Pistol_Fire"),
+		TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Pistol/Anim_Arms_Pistol_Reload.Anim_Arms_Pistol_Reload"),
+		TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Pistol/Anim_Arms_Pistol_ReloadEmpty.Anim_Arms_Pistol_ReloadEmpty"),
 		TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Rifle/Anim_Arms_AmericanRifle_Pose.Anim_Arms_AmericanRifle_Pose"),
 		TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Shotgun/Anim_Arms_Shotgun_Idle.Anim_Arms_Shotgun_Idle"),
 		TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Sniper/Anim_Arms_Sniper__Idle.Anim_Arms_Sniper__Idle"),
+		TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Pistol/Weapon/SKM_Pistol.SKM_Pistol"),
 	};
 
-	for (const TCHAR* AnimPath : HoldAnimPaths)
+	for (const TCHAR* Path : PrecachePaths)
 	{
-		ConstructorHelpers::FObjectFinder<UAnimSequenceBase> AnimFinder(AnimPath);
+		if (FString(Path).Contains(TEXT("SKM_Pistol")))
+		{
+			ConstructorHelpers::FObjectFinder<USkeletalMesh> MeshFinder(Path);
+			if (MeshFinder.Succeeded())
+			{
+				WeaponMeshCache.Add(Path, MeshFinder.Object);
+			}
+			continue;
+		}
+
+		ConstructorHelpers::FObjectFinder<UAnimSequenceBase> AnimFinder(Path);
 		if (AnimFinder.Succeeded())
 		{
-			HoldAnimCache.Add(AnimPath, AnimFinder.Object);
+			HoldAnimCache.Add(Path, AnimFinder.Object);
 		}
 	}
 }
@@ -185,9 +319,6 @@ void USCARAvatarWeaponSyncComponent::TickComponent(
 	}
 
 	APawn* LocalPawn = LocalPC->GetPawn();
-
-	// During the join window our own pawn exists but is not possessed yet and
-	// would look "remote"; never touch any pawn until possession completes.
 	if (!LocalPawn)
 	{
 		return;
@@ -219,31 +350,36 @@ void USCARAvatarWeaponSyncComponent::SampleAndSendLocalLoadout(APawn* LocalPawn)
 		return;
 	}
 
-	if (bHasSentLoadout && Sample == LastSentSample)
+	Sample.Action = DetectLocalAnimAction(LocalPawn);
+
+	const bool bLoadoutChanged =
+		!bHasSentLoadout ||
+		Sample.WeaponMeshPath != LastSentSample.WeaponMeshPath ||
+		Sample.WeaponId != LastSentSample.WeaponId ||
+		Sample.bAiming != LastSentSample.bAiming ||
+		Sample.AttachSocket != LastSentSample.AttachSocket ||
+		!Sample.RelativeLocation.Equals(LastSentSample.RelativeLocation, 0.01f) ||
+		!Sample.RelativeRotation.Equals(LastSentSample.RelativeRotation, 0.01f);
+
+	if (bLoadoutChanged)
 	{
-		return;
+		LoadoutState->Server_UpdateAvatarLoadout(
+			Sample.WeaponMeshPath,
+			Sample.WeaponId,
+			Sample.bAiming,
+			Sample.AttachSocket,
+			Sample.RelativeLocation,
+			Sample.RelativeRotation);
 	}
 
-	LoadoutState->Server_UpdateAvatarLoadout(
-		Sample.WeaponMeshPath,
-		Sample.WeaponId,
-		Sample.bAiming,
-		Sample.AttachSocket,
-		Sample.RelativeLocation,
-		Sample.RelativeRotation);
+	if (Sample.Action != ESCARAvatarAnimAction::None && Sample.Action != LastDetectedAction)
+	{
+		LoadoutState->Server_NotifyAvatarAnimAction(static_cast<uint8>(Sample.Action));
+	}
+
+	LastDetectedAction = Sample.Action;
 	LastSentSample = Sample;
 	bHasSentLoadout = true;
-
-	UE_LOG(
-		LogSCARAvatarWeapon,
-		Log,
-		TEXT("Sent avatar loadout: weapon='%s' id=%d aiming=%d socket='%s' relLoc=%s relRot=%s"),
-		*Sample.WeaponMeshPath,
-		Sample.WeaponId,
-		Sample.bAiming ? 1 : 0,
-		*Sample.AttachSocket.ToString(),
-		*Sample.RelativeLocation.ToString(),
-		*Sample.RelativeRotation.ToString());
 }
 
 bool USCARAvatarWeaponSyncComponent::ReadLocalLoadout(
@@ -255,6 +391,11 @@ bool USCARAvatarWeaponSyncComponent::ReadLocalLoadout(
 	GetByteProperty(LocalPawn, TEXT("EquippedWeapon"), OutSample.WeaponId);
 	GetBoolProperty(LocalPawn, TEXT("IsAim"), OutSample.bAiming);
 
+	bool bEquipped = false;
+	bool bIsWeapon = false;
+	GetBoolProperty(LocalPawn, TEXT("Equipped"), bEquipped);
+	GetBoolProperty(LocalPawn, TEXT("IsWeapon"), bIsWeapon);
+
 	if (const USkeletalMeshComponent* ItemMesh = FindHeldItemMesh(LocalPawn))
 	{
 		if (const USkeletalMesh* MeshAsset = ItemMesh->GetSkeletalMeshAsset())
@@ -262,21 +403,58 @@ bool USCARAvatarWeaponSyncComponent::ReadLocalLoadout(
 			OutSample.WeaponMeshPath = MeshAsset->GetPathName();
 		}
 
-		// The kit's ChangeWeaponSocket/SocketOffset already placed this mesh
-		// perfectly on the owner's body; capture that placement verbatim so
-		// remote machines can reproduce the exact grip.
 		OutSample.AttachSocket = ItemMesh->GetAttachSocketName();
 		OutSample.RelativeLocation = ItemMesh->GetRelativeLocation();
 		OutSample.RelativeRotation = ItemMesh->GetRelativeRotation();
 	}
 
+	if (OutSample.WeaponMeshPath.IsEmpty() && (bEquipped || bIsWeapon || OutSample.bAiming))
+	{
+		OutSample.WeaponMeshPath = DefaultPistolMeshPath;
+	}
+
 	return true;
+}
+
+ESCARAvatarAnimAction USCARAvatarWeaponSyncComponent::DetectLocalAnimAction(APawn* LocalPawn)
+{
+	if (!LocalPawn)
+	{
+		return ESCARAvatarAnimAction::None;
+	}
+
+	bool bReloading = false;
+	if (GetBoolProperty(LocalPawn, TEXT("IsReloading"), bReloading) && bReloading)
+	{
+		return ESCARAvatarAnimAction::Reload;
+	}
+	if (GetBoolProperty(LocalPawn, TEXT("Reloading"), bReloading) && bReloading)
+	{
+		return ESCARAvatarAnimAction::Reload;
+	}
+
+	float FireAlpha = 0.f;
+	if (GetFloatProperty(LocalPawn, TEXT("CrosshairFireAlpha"), FireAlpha))
+	{
+		const bool bRisingEdge = FireAlpha > 0.15f && LastFireAlpha <= 0.15f;
+		LastFireAlpha = FireAlpha;
+		if (bRisingEdge)
+		{
+			return ESCARAvatarAnimAction::Fire;
+		}
+	}
+
+	bool bFiring = false;
+	if (GetBoolProperty(LocalPawn, TEXT("IsFiring"), bFiring) && bFiring)
+	{
+		return ESCARAvatarAnimAction::Fire;
+	}
+
+	return ESCARAvatarAnimAction::None;
 }
 
 USkeletalMeshComponent* USCARAvatarWeaponSyncComponent::FindHeldItemMesh(APawn* Pawn) const
 {
-	// The kit stores the currently held item actor in SpawnedItemRef /
-	// SpawnedItem; prefer those over scanning so weapon swaps are exact.
 	for (const FName PropertyName : {FName(TEXT("SpawnedItemRef")), FName(TEXT("SpawnedItem"))})
 	{
 		if (const AActor* ItemActor = Cast<AActor>(GetObjectProperty(Pawn, PropertyName)))
@@ -291,7 +469,6 @@ USkeletalMeshComponent* USCARAvatarWeaponSyncComponent::FindHeldItemMesh(APawn* 
 		}
 	}
 
-	// Fallback: first visible Item_Mesh among attached item actors.
 	TArray<AActor*> AttachedActors;
 	Pawn->GetAttachedActors(AttachedActors, true, true);
 	for (const AActor* AttachedActor : AttachedActors)
@@ -338,8 +515,6 @@ void USCARAvatarWeaponSyncComponent::UpdateRemoteAvatarWeapons(
 			continue;
 		}
 
-		// Extra identity check: never treat a pawn owned by the local player
-		// state as remote (covers possession races during join).
 		if (LocalPC->PlayerState && LoadoutState == LocalPC->PlayerState)
 		{
 			continue;
@@ -353,11 +528,18 @@ void USCARAvatarWeaponSyncComponent::ApplyLoadoutToRemotePawn(
 	APawn* Pawn,
 	const ASCARARMultiplayerPlayerState* LoadoutState)
 {
-	const bool bArmed = !LoadoutState->HeldWeaponMeshPath.IsEmpty();
+	FString WeaponMeshPath = LoadoutState->HeldWeaponMeshPath;
+	if (WeaponMeshPath.IsEmpty() &&
+		(LoadoutState->bAvatarAiming || LoadoutState->EquippedWeaponId != 0))
+	{
+		WeaponMeshPath = DefaultPistolMeshPath;
+	}
 
-	// Keep the remote pawn's kit variables mirroring its owner so any kit
-	// logic keying off them behaves consistently.
-	SetPawnStanceVariables(Pawn, LoadoutState->EquippedWeaponId, LoadoutState->bAvatarAiming, bArmed);
+	const bool bArmed = !WeaponMeshPath.IsEmpty();
+	const bool bAiming = LoadoutState->bAvatarAiming;
+
+	SetPawnStanceVariables(Pawn, LoadoutState->EquippedWeaponId, bAiming, bArmed);
+	DestroyLeftoverAdsDrivers(Pawn);
 
 	USkeletalMeshComponent* BodyMesh = nullptr;
 	TArray<USkeletalMeshComponent*> Meshes;
@@ -376,7 +558,14 @@ void USCARAvatarWeaponSyncComponent::ApplyLoadoutToRemotePawn(
 		return;
 	}
 
-	ApplyHoldAnimationToBody(Pawn, BodyMesh, LoadoutState->HeldWeaponMeshPath, bArmed);
+	EnsureMannyAnimBP(Pawn, BodyMesh);
+	ApplyWeaponStance(Pawn, BodyMesh, WeaponMeshPath, bArmed, bAiming);
+	ApplyAvatarAction(
+		Pawn,
+		BodyMesh,
+		static_cast<ESCARAvatarAnimAction>(LoadoutState->AvatarAnimAction),
+		LoadoutState->AvatarAnimActionSerial,
+		WeaponMeshPath);
 
 	USkeletalMeshComponent* WeaponComponent = EnsureAvatarWeaponComponent(Pawn, BodyMesh);
 	if (!WeaponComponent)
@@ -391,26 +580,23 @@ void USCARAvatarWeaponSyncComponent::ApplyLoadoutToRemotePawn(
 		return;
 	}
 
-	// Reproduce the owner's exact attachment: same socket on the same body
-	// skeleton, same per-weapon grip offset applied by the kit.
-	const FName DesiredSocket = (LoadoutState->HeldWeaponAttachSocket != NAME_None &&
-			BodyMesh->DoesSocketExist(LoadoutState->HeldWeaponAttachSocket))
-		? LoadoutState->HeldWeaponAttachSocket
+	const FName DesiredSocket = FName(TEXT("ik_hand_gun"));
+	const FName SocketToUse = BodyMesh->DoesSocketExist(DesiredSocket)
+		? DesiredSocket
 		: ResolveHandSocket(BodyMesh);
 
-	if (WeaponComponent->GetAttachParent() != BodyMesh ||
-		WeaponComponent->GetAttachSocketName() != DesiredSocket)
-	{
-		WeaponComponent->AttachToComponent(
-			BodyMesh,
-			FAttachmentTransformRules::SnapToTargetIncludingScale,
-			DesiredSocket);
-	}
+	WeaponComponent->SetUsingAbsoluteLocation(false);
+	WeaponComponent->SetUsingAbsoluteRotation(false);
+	WeaponComponent->SetUsingAbsoluteScale(false);
+	WeaponComponent->AttachToComponent(
+		BodyMesh,
+		FAttachmentTransformRules::SnapToTargetIncludingScale,
+		SocketToUse);
+	WeaponComponent->SetRelativeLocation(FVector::ZeroVector);
+	WeaponComponent->SetRelativeRotation(FRotator::ZeroRotator);
+	WeaponComponent->SetRelativeScale3D(FVector::OneVector);
 
-	WeaponComponent->SetRelativeLocation(LoadoutState->HeldWeaponRelativeLocation);
-	WeaponComponent->SetRelativeRotation(LoadoutState->HeldWeaponRelativeRotation);
-
-	if (USkeletalMesh* WeaponMesh = ResolveWeaponMesh(LoadoutState->HeldWeaponMeshPath))
+	if (USkeletalMesh* WeaponMesh = ResolveWeaponMesh(WeaponMeshPath))
 	{
 		if (WeaponComponent->GetSkeletalMeshAsset() != WeaponMesh)
 		{
@@ -419,63 +605,235 @@ void USCARAvatarWeaponSyncComponent::ApplyLoadoutToRemotePawn(
 
 		WeaponComponent->SetHiddenInGame(false);
 		WeaponComponent->SetVisibility(true, true);
+		WeaponComponent->SetOwnerNoSee(false);
+		WeaponComponent->SetOnlyOwnerSee(false);
 	}
+
+	HideDuplicatePresentationWeapons(Pawn);
 }
 
-void USCARAvatarWeaponSyncComponent::ApplyHoldAnimationToBody(
+void USCARAvatarWeaponSyncComponent::EnsureMannyAnimBP(
 	APawn* Pawn,
-	USkeletalMeshComponent* BodyMesh,
-	const FString& WeaponMeshPath,
-	const bool bArmed)
+	USkeletalMeshComponent* BodyMesh)
 {
-	if (!bArmed)
+	if (!OriginalBodyAnimClasses.Contains(Pawn))
 	{
-		// Restore the kit's locomotion anim blueprint when unarmed.
-		if (const TObjectPtr<UAnimSequenceBase>* Applied = AppliedHoldAnims.Find(Pawn))
+		if (UClass* CurrentClass = BodyMesh->GetAnimClass())
 		{
-			if (*Applied)
-			{
-				if (const TSubclassOf<UAnimInstance>* OriginalClass = OriginalBodyAnimClasses.Find(Pawn))
-				{
-					BodyMesh->SetAnimationMode(EAnimationMode::AnimationBlueprint);
-					BodyMesh->SetAnimInstanceClass(*OriginalClass);
-				}
-				AppliedHoldAnims.Add(Pawn, nullptr);
-			}
+			OriginalBodyAnimClasses.Add(Pawn, CurrentClass);
 		}
+	}
+
+	TSubclassOf<UAnimInstance> MannyClass = nullptr;
+	if (const TSubclassOf<UAnimInstance>* OriginalClass = OriginalBodyAnimClasses.Find(Pawn))
+	{
+		MannyClass = *OriginalClass;
+	}
+	if (!MannyClass)
+	{
+		MannyClass = LoadClass<UAnimInstance>(
+			nullptr,
+			TEXT("/Game/BodycamFPSKIT/Demo/Character/Mannequins/Animations/ABP_Manny.ABP_Manny_C"));
+		if (MannyClass)
+		{
+			OriginalBodyAnimClasses.Add(Pawn, MannyClass);
+		}
+	}
+
+	if (!MannyClass)
+	{
 		return;
 	}
 
-	UAnimSequenceBase* HoldAnim = ResolveHoldAnimation(WeaponMeshPath);
+	const bool bWrongMode = BodyMesh->GetAnimationMode() != EAnimationMode::AnimationBlueprint;
+	const bool bWrongClass = BodyMesh->GetAnimClass() != MannyClass.Get();
+	if (bWrongMode || bWrongClass || BodyMesh->GetAnimInstance() == nullptr)
+	{
+		BodyMesh->SetAnimationMode(EAnimationMode::AnimationBlueprint);
+		BodyMesh->SetAnimInstanceClass(MannyClass);
+		UE_LOG(
+			LogSCARAvatarWeapon,
+			Log,
+			TEXT("Remote %s: restored ABP_Manny (look/aim/turn alive)"),
+			*Pawn->GetName());
+	}
+
+	BodyMesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+	BodyMesh->bPauseAnims = false;
+	BodyMesh->SetComponentTickEnabled(true);
+}
+
+void USCARAvatarWeaponSyncComponent::ApplyWeaponStance(
+	APawn* Pawn,
+	USkeletalMeshComponent* BodyMesh,
+	const FString& WeaponMeshPath,
+	const bool bArmed,
+	const bool bAiming)
+{
+	const uint8 Animset = bArmed ? ResolveAnimsetForWeapon(WeaponMeshPath) : AnimsetHands;
+
+	ForceAnimsetProperty(Pawn, Animset);
+	SetByteProperty(Pawn, TEXT("EquippedGunSet"), Animset);
+
+	UAnimInstance* AnimInstance = BodyMesh->GetAnimInstance();
+	if (!AnimInstance)
+	{
+		return;
+	}
+
+	ForceAnimsetProperty(AnimInstance, Animset);
+	SetByteProperty(AnimInstance, TEXT("EquippedAnimset"), Animset);
+	SetBoolProperty(AnimInstance, TEXT("IsAiming"), bAiming);
+	SetBoolProperty(AnimInstance, TEXT("IsAim"), bAiming);
+
+	// Continuous UpperBody hold: ADS when aiming, kit idle otherwise.
+	// Re-apply if Manny's turn logic StopSlotAnimation clears the slot.
+	if (!bArmed)
+	{
+		return;
+	}
+
+	UAnimSequenceBase* HoldAnim = ResolveHoldAnimation(WeaponMeshPath, bAiming);
 	if (!HoldAnim)
 	{
 		return;
 	}
 
-	const TObjectPtr<UAnimSequenceBase>* Applied = AppliedHoldAnims.Find(Pawn);
-	if (Applied && *Applied == HoldAnim)
+	const bool bActionPlaying = [&]()
+	{
+		if (UAnimSequenceBase* FireAnim = ResolveActionAnimation(WeaponMeshPath, ESCARAvatarAnimAction::Fire))
+		{
+			if (AnimInstance->IsPlayingSlotAnimation(FireAnim, UpperBodySlotName))
+			{
+				return true;
+			}
+		}
+		if (UAnimSequenceBase* ReloadAnim = ResolveActionAnimation(WeaponMeshPath, ESCARAvatarAnimAction::Reload))
+		{
+			if (AnimInstance->IsPlayingSlotAnimation(ReloadAnim, UpperBodySlotName))
+			{
+				return true;
+			}
+		}
+		if (UAnimSequenceBase* ReloadEmptyAnim =
+				ResolveActionAnimation(WeaponMeshPath, ESCARAvatarAnimAction::ReloadEmpty))
+		{
+			if (AnimInstance->IsPlayingSlotAnimation(ReloadEmptyAnim, UpperBodySlotName))
+			{
+				return true;
+			}
+		}
+		return false;
+	}();
+
+	if (bActionPlaying)
 	{
 		return;
 	}
 
-	if (!OriginalBodyAnimClasses.Contains(Pawn))
+	if (!AnimInstance->IsPlayingSlotAnimation(HoldAnim, UpperBodySlotName))
 	{
-		OriginalBodyAnimClasses.Add(Pawn, BodyMesh->GetAnimClass());
+		AnimInstance->PlaySlotAnimationAsDynamicMontage(
+			HoldAnim,
+			UpperBodySlotName,
+			0.15f,
+			0.15f,
+			1.f,
+			1000);
+	}
+}
+
+void USCARAvatarWeaponSyncComponent::ApplyAvatarAction(
+	APawn* Pawn,
+	USkeletalMeshComponent* BodyMesh,
+	const ESCARAvatarAnimAction Action,
+	const uint8 Serial,
+	const FString& WeaponMeshPath)
+{
+	if (Action == ESCARAvatarAnimAction::None || Serial == 0)
+	{
+		return;
 	}
 
-	// The default ABP_Manny on this body only knows unarmed locomotion, so
-	// override it with the ADS weapon-hold pose (same skeleton/data the FPS
-	// player's own pose uses).
-	BodyMesh->SetAnimationMode(EAnimationMode::AnimationSingleNode);
-	BodyMesh->PlayAnimation(HoldAnim, true);
-	AppliedHoldAnims.Add(Pawn, HoldAnim);
+	if (LastPlayedActionSerial.FindRef(Pawn) == Serial)
+	{
+		return;
+	}
+
+	UAnimInstance* AnimInstance = BodyMesh ? BodyMesh->GetAnimInstance() : nullptr;
+	UAnimSequenceBase* ActionAnim = ResolveActionAnimation(WeaponMeshPath, Action);
+	if (!AnimInstance || !ActionAnim)
+	{
+		return;
+	}
+
+	AnimInstance->StopSlotAnimation(0.05f, UpperBodySlotName);
+	AnimInstance->PlaySlotAnimationAsDynamicMontage(
+		ActionAnim,
+		UpperBodySlotName,
+		0.05f,
+		0.15f,
+		1.f,
+		1);
+
+	LastPlayedActionSerial.Add(Pawn, Serial);
 
 	UE_LOG(
 		LogSCARAvatarWeapon,
 		Log,
-		TEXT("Applied hold animation '%s' to %s"),
-		*HoldAnim->GetName(),
-		*Pawn->GetName());
+		TEXT("Remote %s: avatar action %d '%s'"),
+		*Pawn->GetName(),
+		static_cast<int32>(Action),
+		*ActionAnim->GetName());
+}
+
+void USCARAvatarWeaponSyncComponent::DestroyLeftoverAdsDrivers(APawn* Pawn)
+{
+	if (!Pawn)
+	{
+		return;
+	}
+
+	TArray<USkeletalMeshComponent*> Meshes;
+	Pawn->GetComponents<USkeletalMeshComponent>(Meshes);
+	for (USkeletalMeshComponent* Mesh : Meshes)
+	{
+		if (!Mesh)
+		{
+			continue;
+		}
+
+		const FString Name = Mesh->GetName();
+		if (Name.Contains(TEXT("SCAR_ADSPoseDriver")) || Name.Contains(TEXT("ADSPoseDriver")))
+		{
+			Mesh->DestroyComponent();
+		}
+	}
+}
+
+void USCARAvatarWeaponSyncComponent::HideDuplicatePresentationWeapons(APawn* Pawn)
+{
+	if (!Pawn)
+	{
+		return;
+	}
+
+	TArray<USkeletalMeshComponent*> Meshes;
+	Pawn->GetComponents<USkeletalMeshComponent>(Meshes);
+	for (USkeletalMeshComponent* Mesh : Meshes)
+	{
+		if (!Mesh)
+		{
+			continue;
+		}
+
+		const FString Name = Mesh->GetName();
+		if (Name.Contains(TEXT("OpponentWeapon")) || Name.Contains(TEXT("SCAR_OpponentWeapon")))
+		{
+			Mesh->SetHiddenInGame(true);
+			Mesh->SetVisibility(false, true);
+		}
+	}
 }
 
 USkeletalMeshComponent* USCARAvatarWeaponSyncComponent::EnsureAvatarWeaponComponent(
@@ -515,20 +873,14 @@ USkeletalMeshComponent* USCARAvatarWeaponSyncComponent::EnsureAvatarWeaponCompon
 	WeaponComponent->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::WorldSpaceRepresentation);
 
 	AvatarWeaponComponents.Add(Pawn, WeaponComponent);
-
-	UE_LOG(
-		LogSCARAvatarWeapon,
-		Log,
-		TEXT("Attached avatar weapon to %s at socket '%s'"),
-		*Pawn->GetName(),
-		*SocketName.ToString());
-
 	return WeaponComponent;
 }
 
-UAnimSequenceBase* USCARAvatarWeaponSyncComponent::ResolveHoldAnimation(const FString& WeaponMeshPath)
+UAnimSequenceBase* USCARAvatarWeaponSyncComponent::ResolveHoldAnimation(
+	const FString& WeaponMeshPath,
+	const bool bAiming)
 {
-	const FString AnimPath = ResolveHoldAnimPath(WeaponMeshPath);
+	const FString AnimPath = ResolveHoldAnimPath(WeaponMeshPath, bAiming);
 	if (const TObjectPtr<UAnimSequenceBase>* Cached = HoldAnimCache.Find(AnimPath))
 	{
 		return *Cached;
@@ -547,6 +899,30 @@ UAnimSequenceBase* USCARAvatarWeaponSyncComponent::ResolveHoldAnimation(const FS
 	return Anim;
 }
 
+UAnimSequenceBase* USCARAvatarWeaponSyncComponent::ResolveActionAnimation(
+	const FString& WeaponMeshPath,
+	const ESCARAvatarAnimAction Action)
+{
+	const TCHAR* AnimPath = ResolveActionAnimPath(WeaponMeshPath, Action);
+	if (!AnimPath)
+	{
+		return nullptr;
+	}
+
+	if (const TObjectPtr<UAnimSequenceBase>* Cached = HoldAnimCache.Find(AnimPath))
+	{
+		return *Cached;
+	}
+
+	UAnimSequenceBase* Anim = Cast<UAnimSequenceBase>(FSoftObjectPath(AnimPath).TryLoad());
+	if (Anim)
+	{
+		HoldAnimCache.Add(AnimPath, Anim);
+	}
+
+	return Anim;
+}
+
 USkeletalMesh* USCARAvatarWeaponSyncComponent::ResolveWeaponMesh(const FString& MeshPath)
 {
 	if (const TObjectPtr<USkeletalMesh>* Cached = WeaponMeshCache.Find(MeshPath))
@@ -554,8 +930,7 @@ USkeletalMesh* USCARAvatarWeaponSyncComponent::ResolveWeaponMesh(const FString& 
 		return *Cached;
 	}
 
-	USkeletalMesh* MeshAsset = Cast<USkeletalMesh>(
-		FSoftObjectPath(MeshPath).TryLoad());
+	USkeletalMesh* MeshAsset = Cast<USkeletalMesh>(FSoftObjectPath(MeshPath).TryLoad());
 	if (MeshAsset)
 	{
 		WeaponMeshCache.Add(MeshPath, MeshAsset);
@@ -566,6 +941,23 @@ USkeletalMesh* USCARAvatarWeaponSyncComponent::ResolveWeaponMesh(const FString& 
 	}
 
 	return MeshAsset;
+}
+
+uint8 USCARAvatarWeaponSyncComponent::ResolveAnimsetForWeapon(const FString& WeaponMeshPath)
+{
+	if (WeaponMeshPath.Contains(TEXT("Rifle")))
+	{
+		return AnimsetRifle;
+	}
+	if (WeaponMeshPath.Contains(TEXT("Shotgun")))
+	{
+		return AnimsetShotgun;
+	}
+	if (WeaponMeshPath.Contains(TEXT("Sniper")))
+	{
+		return AnimsetSniper;
+	}
+	return AnimsetPistol;
 }
 
 FName USCARAvatarWeaponSyncComponent::ResolveHandSocket(const USkeletalMeshComponent* BodyMesh)

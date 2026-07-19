@@ -42,6 +42,7 @@ public class SCAR : ModuleRules
 
 			PublicFrameworks.Add("Vision");
 			PublicFrameworks.Add("CoreImage");
+			PublicFrameworks.Add("AVFoundation");
 		}
 	}
 }

@@ -53,6 +53,14 @@ public:
 	UPROPERTY(BlueprintReadOnly, Replicated, Category = "SCAR|Multiplayer|Loadout")
 	FRotator HeldWeaponRelativeRotation = FRotator::ZeroRotator;
 
+	/** One-shot avatar action (fire/reload) for remote UpperBody montages. */
+	UPROPERTY(BlueprintReadOnly, Replicated, Category = "SCAR|Multiplayer|Loadout")
+	uint8 AvatarAnimAction = 0;
+
+	/** Increments on each action so identical actions still trigger OnRep consumers. */
+	UPROPERTY(BlueprintReadOnly, Replicated, Category = "SCAR|Multiplayer|Loadout")
+	uint8 AvatarAnimActionSerial = 0;
+
 	UFUNCTION(Server, Reliable)
 	void Server_UpdateAvatarLoadout(
 		const FString& WeaponMeshPath,
@@ -61,6 +69,9 @@ public:
 		FName AttachSocket,
 		FVector RelativeLocation,
 		FRotator RelativeRotation);
+
+	UFUNCTION(Server, Reliable)
+	void Server_NotifyAvatarAnimAction(uint8 Action);
 
 protected:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;

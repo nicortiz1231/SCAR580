@@ -5,7 +5,7 @@
 ASCARARMultiplayerPlayerState::ASCARARMultiplayerPlayerState()
 {
 	bReplicates = true;
-	SetNetUpdateFrequency(10.f);
+	SetNetUpdateFrequency(20.f);
 }
 
 void ASCARARMultiplayerPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -19,6 +19,8 @@ void ASCARARMultiplayerPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeP
 	DOREPLIFETIME(ASCARARMultiplayerPlayerState, HeldWeaponAttachSocket);
 	DOREPLIFETIME(ASCARARMultiplayerPlayerState, HeldWeaponRelativeLocation);
 	DOREPLIFETIME(ASCARARMultiplayerPlayerState, HeldWeaponRelativeRotation);
+	DOREPLIFETIME(ASCARARMultiplayerPlayerState, AvatarAnimAction);
+	DOREPLIFETIME(ASCARARMultiplayerPlayerState, AvatarAnimActionSerial);
 }
 
 void ASCARARMultiplayerPlayerState::Server_UpdateAvatarLoadout_Implementation(
@@ -35,6 +37,21 @@ void ASCARARMultiplayerPlayerState::Server_UpdateAvatarLoadout_Implementation(
 	HeldWeaponAttachSocket = AttachSocket;
 	HeldWeaponRelativeLocation = RelativeLocation;
 	HeldWeaponRelativeRotation = RelativeRotation;
+}
+
+void ASCARARMultiplayerPlayerState::Server_NotifyAvatarAnimAction_Implementation(const uint8 Action)
+{
+	if (Action == 0)
+	{
+		return;
+	}
+
+	AvatarAnimAction = Action;
+	++AvatarAnimActionSerial;
+	if (AvatarAnimActionSerial == 0)
+	{
+		AvatarAnimActionSerial = 1;
+	}
 }
 
 void ASCARARMultiplayerPlayerState::RegisterKill()

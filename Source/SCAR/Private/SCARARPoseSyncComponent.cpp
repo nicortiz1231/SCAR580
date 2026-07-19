@@ -196,6 +196,9 @@ FTransform USCARARPoseSyncComponent::ComputeWorldPoseFromSessionRelative(const F
 
 FRotator USCARARPoseSyncComponent::SanitizeMultiplayerBodyRotation(const FRotator& DeviceRotation) const
 {
+	// Replicated aim keeps clamped pitch (for RemoteViewPitch / look).
+	// Actor/mesh placement strips pitch separately so the body stays upright
+	// while ABP_Manny bends spine/head — standard FPS TP avatar behavior.
 	FRotator BodyRotation = DeviceRotation;
 	BodyRotation.Roll = 0.f;
 	BodyRotation.Pitch = FMath::Clamp(
@@ -219,10 +222,20 @@ void USCARARPoseSyncComponent::SyncRemoteVisualizationRotation(APawn* Pawn)
 		return;
 	}
 
+	const FRotator AimRotation = SanitizeMultiplayerBodyRotation(GetCurrentARPose().Rotator());
+
+	// Proxies have no Controller on viewers; RemoteViewPitch feeds
+	// GetBaseAimRotation / GetViewRotation so Manny looks up/down.
+	Pawn->SetRemoteViewPitch(AimRotation.Pitch);
+
 	if (AController* Controller = Pawn->GetController())
 	{
-		Controller->SetControlRotation(GetCurrentARPose().Rotator());
+		Controller->SetControlRotation(AimRotation);
 	}
+
+	// Keep the capsule upright (yaw only). Look pitch is AnimBP-driven.
+	const FRotator ActorRotation(0.f, AimRotation.Yaw, 0.f);
+	Pawn->SetActorRotation(ActorRotation);
 }
 
 void USCARARPoseSyncComponent::ApplyPoseToOwner(const FTransform& Pose, const bool bTeleport)
@@ -233,9 +246,12 @@ void USCARARPoseSyncComponent::ApplyPoseToOwner(const FTransform& Pose, const bo
 		return;
 	}
 
+	const FRotator AimRotation = Pose.Rotator();
+	const FRotator UprightRotation(0.f, AimRotation.Yaw, 0.f);
+
 	Owner->SetActorLocationAndRotation(
 		Pose.GetLocation(),
-		Pose.Rotator(),
+		UprightRotation,
 		false,
 		nullptr,
 		bTeleport ? ETeleportType::TeleportPhysics : ETeleportType::None);
@@ -262,8 +278,10 @@ void USCARARPoseSyncComponent::UpdateProxyInterpolation(const float DeltaTime)
 	const float Alpha = FMath::Clamp(DeltaTime * ProxyInterpolationSpeed, 0.f, 1.f);
 	const FVector NewLocation = FMath::Lerp(CurrentLocation, TargetLocation, Alpha);
 	const FQuat NewRotation = FQuat::Slerp(CurrentRotation, TargetRotation, Alpha).GetNormalized();
+	const FRotator NewRotator = NewRotation.Rotator();
+	const FRotator UprightRotation(0.f, NewRotator.Yaw, 0.f);
 
-	Owner->SetActorLocationAndRotation(NewLocation, NewRotation.Rotator(), false, nullptr, ETeleportType::None);
+	Owner->SetActorLocationAndRotation(NewLocation, UprightRotation, false, nullptr, ETeleportType::None);
 }
 
 void USCARARPoseSyncComponent::UpdateRemoteProxyPose(const float DeltaTime)

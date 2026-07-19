@@ -13,27 +13,23 @@ class UAnimSequenceBase;
 class USkeletalMesh;
 class USkeletalMeshComponent;
 
+/** Avatar one-shot actions mirrored to remote mannequins. */
+UENUM(BlueprintType)
+enum class ESCARAvatarAnimAction : uint8
+{
+	None = 0,
+	Fire = 1,
+	Reload = 2,
+	ReloadEmpty = 3,
+};
+
 /**
- * Lives on the LOCAL player controller (attached dynamically by
- * ASCARARMultiplayerPlayerController -- no Blueprint edits required).
+ * Lives on the LOCAL player controller.
  *
- * The Bodycam kit spawns weapon items purely locally on the owning device and
- * none of its loadout state replicates, so remote players appear unarmed.
- * This component closes that gap in both directions:
- *
- *  1. OUTGOING: samples the local pawn's held weapon (the kit's SpawnedItem /
- *     SpawnedItemRef item actor's "Item_Mesh"), EquippedWeapon id, and IsAim
- *     flag via reflection, and pushes changes to the local player state via a
- *     Server RPC so everyone receives them.
- *
- *  2. INCOMING: for every remote player pawn, reads the replicated loadout
- *     from that player's state, attaches a weapon mesh to the full-body
- *     avatar's hand socket, and writes EquippedWeapon / IsAim / Equipped onto
- *     the remote pawn's kit variables so its anim blueprint holds and aims
- *     the weapon with the proper stance.
- *
- * Everything is presentation-local except the tiny replicated loadout state
- * on ASCARARMultiplayerPlayerState.
+ * Remote CharacterMesh0 keeps ABP_Manny so look / turn / loco stay alive.
+ * Stance vars + EquippedAnimset select the kit upper-body weapon hold.
+ * Aim pitch is driven by PoseSync -> SetRemoteViewPitch (not whole-mesh tip).
+ * Fire / reload play as UpperBody slot montages. Local FP arms are untouched.
  */
 UCLASS(ClassGroup = (SCAR))
 class SCAR_API USCARAvatarWeaponSyncComponent : public UActorComponent
@@ -43,13 +39,14 @@ class SCAR_API USCARAvatarWeaponSyncComponent : public UActorComponent
 public:
 	USCARAvatarWeaponSyncComponent();
 
-	/** How often the local pawn's loadout is sampled for changes. */
 	UPROPERTY(EditAnywhere, Category = "SCAR|AvatarWeapon", meta = (ClampMin = "1.0", ClampMax = "30.0"))
-	float SampleRateHz = 5.f;
+	float SampleRateHz = 10.f;
 
-	/** Body mesh (full-body avatar other players see) component name. */
 	UPROPERTY(EditAnywhere, Category = "SCAR|AvatarWeapon")
 	FName BodyMeshComponentName = TEXT("CharacterMesh0");
+
+	UPROPERTY(EditAnywhere, Category = "SCAR|AvatarWeapon")
+	FName UpperBodySlotName = TEXT("UpperBody");
 
 protected:
 	virtual void TickComponent(
@@ -66,6 +63,7 @@ private:
 		FName AttachSocket = NAME_None;
 		FVector RelativeLocation = FVector::ZeroVector;
 		FRotator RelativeRotation = FRotator::ZeroRotator;
+		ESCARAvatarAnimAction Action = ESCARAvatarAnimAction::None;
 
 		bool operator==(const FLocalLoadoutSample& Other) const
 		{
@@ -74,29 +72,37 @@ private:
 				bAiming == Other.bAiming &&
 				AttachSocket == Other.AttachSocket &&
 				RelativeLocation.Equals(Other.RelativeLocation, 0.01f) &&
-				RelativeRotation.Equals(Other.RelativeRotation, 0.01f);
+				RelativeRotation.Equals(Other.RelativeRotation, 0.01f) &&
+				Action == Other.Action;
 		}
 	};
 
-	// Outgoing: local pawn -> replicated player state.
 	void SampleAndSendLocalLoadout(APawn* LocalPawn);
 	bool ReadLocalLoadout(APawn* LocalPawn, FLocalLoadoutSample& OutSample) const;
+	ESCARAvatarAnimAction DetectLocalAnimAction(APawn* LocalPawn);
 	USkeletalMeshComponent* FindHeldItemMesh(APawn* Pawn) const;
 
-	// Incoming: replicated player state -> remote pawn visuals.
 	void UpdateRemoteAvatarWeapons(const APlayerController* LocalPC, const APawn* LocalPawn);
 	void ApplyLoadoutToRemotePawn(APawn* Pawn, const ASCARARMultiplayerPlayerState* LoadoutState);
-	void ApplyHoldAnimationToBody(APawn* Pawn, USkeletalMeshComponent* BodyMesh, const FString& WeaponMeshPath, bool bArmed);
+	void EnsureMannyAnimBP(APawn* Pawn, USkeletalMeshComponent* BodyMesh);
+	void ApplyWeaponStance(APawn* Pawn, USkeletalMeshComponent* BodyMesh, const FString& WeaponMeshPath, bool bArmed, bool bAiming);
+	void ApplyAvatarAction(APawn* Pawn, USkeletalMeshComponent* BodyMesh, ESCARAvatarAnimAction Action, uint8 Serial, const FString& WeaponMeshPath);
+	void DestroyLeftoverAdsDrivers(APawn* Pawn);
 	USkeletalMeshComponent* EnsureAvatarWeaponComponent(APawn* Pawn, USkeletalMeshComponent* BodyMesh);
 	USkeletalMesh* ResolveWeaponMesh(const FString& MeshPath);
-	UAnimSequenceBase* ResolveHoldAnimation(const FString& WeaponMeshPath);
+	UAnimSequenceBase* ResolveHoldAnimation(const FString& WeaponMeshPath, bool bAiming);
+	UAnimSequenceBase* ResolveActionAnimation(const FString& WeaponMeshPath, ESCARAvatarAnimAction Action);
+	static uint8 ResolveAnimsetForWeapon(const FString& WeaponMeshPath);
 	static FName ResolveHandSocket(const USkeletalMeshComponent* BodyMesh);
 	static void SetPawnStanceVariables(APawn* Pawn, uint8 WeaponId, bool bAiming, bool bArmed);
+	static void HideDuplicatePresentationWeapons(APawn* Pawn);
 
 	double LastSampleSeconds = 0.0;
 
 	FLocalLoadoutSample LastSentSample;
 	bool bHasSentLoadout = false;
+	ESCARAvatarAnimAction LastDetectedAction = ESCARAvatarAnimAction::None;
+	float LastFireAlpha = 0.f;
 
 	UPROPERTY()
 	TMap<FString, TObjectPtr<USkeletalMesh>> WeaponMeshCache;
@@ -107,10 +113,8 @@ private:
 	UPROPERTY()
 	TMap<TObjectPtr<APawn>, TObjectPtr<USkeletalMeshComponent>> AvatarWeaponComponents;
 
-	// Per-pawn anim override bookkeeping so we can restore the kit's
-	// locomotion anim blueprint when a player becomes unarmed.
 	UPROPERTY()
-	TMap<TObjectPtr<APawn>, TObjectPtr<UAnimSequenceBase>> AppliedHoldAnims;
+	TMap<TObjectPtr<APawn>, uint8> LastPlayedActionSerial;
 
 	UPROPERTY()
 	TMap<TObjectPtr<APawn>, TSubclassOf<UAnimInstance>> OriginalBodyAnimClasses;

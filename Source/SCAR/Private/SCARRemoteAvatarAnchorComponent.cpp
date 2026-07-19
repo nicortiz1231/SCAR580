@@ -8,6 +8,7 @@
 #include "GameFramework/PlayerState.h"
 #include "GameFramework/Pawn.h"
 #include "HeadMountedDisplayFunctionLibrary.h"
+#include "SCARARPoseSyncComponent.h"
 
 USCARRemoteAvatarAnchorComponent::USCARRemoteAvatarAnchorComponent()
 {
@@ -133,7 +134,21 @@ void USCARRemoteAvatarAnchorComponent::TickComponent(
 
 		// Stateless: desired mesh world pose is derived from the replicated
 		// pawn transform every frame; nothing we wrote last frame is read.
-		const FTransform PawnWorld = Pawn->GetActorTransform();
+		FTransform PawnWorld = Pawn->GetActorTransform();
+
+		// Prefer the replicated AR body yaw. Look pitch must stay on
+		// RemoteViewPitch / ABP_Manny — tipping the whole mesh here made the
+		// avatar rotate as a rigid stick and killed organic look.
+		if (const USCARARPoseSyncComponent* PoseSync =
+				Pawn->FindComponentByClass<USCARARPoseSyncComponent>())
+		{
+			if (PoseSync->HasValidARPose())
+			{
+				const FRotator Aim = PoseSync->GetCurrentARPose().Rotator();
+				PawnWorld.SetRotation(FRotator(0.f, Aim.Yaw, 0.f).Quaternion());
+			}
+		}
+
 		const FTransform MeshWorld = State->DefaultRelative * PawnWorld;
 
 		const FVector AnchoredLocation =

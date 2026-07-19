@@ -1,22 +1,28 @@
 #include "SCARWeaponAttachmentBlueprintLibrary.h"
 
+#include "SCARDeviceTorch.h"
 #include "SCARPhonePreviewParity.h"
 
 #include "Blueprint/UserWidget.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/CanvasPanelSlot.h"
+#include "Components/ComboBoxString.h"
 #include "Components/HorizontalBox.h"
 #include "Components/PanelWidget.h"
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
+#include "Components/LocalLightComponent.h"
 #include "Components/LightComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/SpotLightComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Engine/Texture.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/MaterialInterface.h"
 #include "TimerManager.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
@@ -53,15 +59,24 @@ namespace SCARWeaponAttachmentInternal
 			return nullptr;
 		}
 
+		// Prefer exact / GUID-mangled Bodycam names (Laser_38_...) over loose substring matches.
+		FProperty* ContainsMatch = nullptr;
+		const FString HintString(Hint);
+		const FString HintPrefix = HintString + TEXT("_");
 		for (TFieldIterator<FProperty> It(Owner); It; ++It)
 		{
-			if (It->GetName().Contains(Hint))
+			const FString Name = It->GetName();
+			if (Name.Equals(HintString) || Name.StartsWith(HintPrefix))
 			{
 				return *It;
 			}
+			if (!ContainsMatch && Name.Contains(HintString))
+			{
+				ContainsMatch = *It;
+			}
 		}
 
-		return nullptr;
+		return ContainsMatch;
 	}
 
 	static FProperty* FindExactProperty(UStruct* Owner, const FName PropertyName)
@@ -341,13 +356,81 @@ namespace SCARWeaponAttachmentInternal
 	static constexpr TCHAR LaserBeamMaterialPath[] =
 		TEXT("/Game/BodycamFPSKIT/Blueprints/Attachments/Laser/Materials/Lasers/MI_Laser.MI_Laser");
 
+	// Light-function + cookie from Zombie Survival / FirstPersonHorrorKit flashlight.
+	static constexpr TCHAR HorrorFlashLightFunctionPath[] =
+		TEXT("/Game/FirstPersonHorrorKit/Demo/FPFlashlightAnims/Mesh/Material/M_Light.M_Light");
+
+	// Exact cookie texture used by M_Light — drawn small/additive over AR so rings+hotspot match the kit.
+	static constexpr TCHAR HorrorFlashCookieTexturePath[] =
+		TEXT("/Game/FirstPersonHorrorKit/Demo/FPFlashlightAnims/Mesh/Textures/T_FlashlightD.T_FlashlightD");
+
+	static constexpr TCHAR SoftFlashSpotMaterialPath[] =
+		TEXT("/Game/SCAR580/Materials/M_AR_FlashCookie.M_AR_FlashCookie");
+
+	static constexpr TCHAR FlashSpotPlaneMeshPath[] =
+		TEXT("/Engine/BasicShapes/Plane.Plane");
+
+	/** Wider cone so soft outer spill matches the kit reference (~half screen). */
+	static constexpr float FlashOuterConeDegrees = 17.f;
+	static constexpr float FlashInnerConeDegrees = 5.f;
+
 	static const FName ScarArLaserBeamComponentName(TEXT("SCAR_AR_LaserBeam"));
 	static const FName ScarArLaserDotComponentName(TEXT("SCAR_AR_LaserDot"));
 	static const FName ScarArFlashGlowComponentName(TEXT("SCAR_AR_FlashGlow"));
+	static const FName ScarArFlashConeComponentName(TEXT("SCAR_AR_FlashCone"));
+	static const FName ScarArFlashSpotComponentName(TEXT("SCAR_AR_FlashSpot"));
 
 	static constexpr uint8 BodycamLaserNoneEnum = 0;
 	static constexpr uint8 BodycamLaserFlashEnum = 3;
 	static constexpr uint8 BodycamLaserBeamEnum = 4;
+
+	static bool IsValidBodycamLaserEnum(const uint8 Value)
+	{
+		return Value == BodycamLaserNoneEnum
+			|| Value == BodycamLaserFlashEnum
+			|| Value == BodycamLaserBeamEnum;
+	}
+
+	static uint8 NormalizeBodycamLaserEnum(const uint8 Value)
+	{
+		if (IsValidBodycamLaserEnum(Value))
+		{
+			return Value;
+		}
+
+		// Do NOT remap 1/2 — Bodycam's Attachments combo is ordered EMPTY, LASER, FLASH, so
+		// writing combo index 2 for FLASH must not become Laser. Invalid values stay None.
+		return BodycamLaserNoneEnum;
+	}
+
+	static uint8 MapLaserOptionLabelToEnum(const FString& OptionLabel)
+	{
+		const FString Upper = OptionLabel.ToUpper();
+		if (Upper.Contains(TEXT("FLASH")))
+		{
+			return BodycamLaserFlashEnum;
+		}
+		if (Upper.Contains(TEXT("LASER")))
+		{
+			return BodycamLaserBeamEnum;
+		}
+		if (Upper.Contains(TEXT("EMPTY")) || Upper.Contains(TEXT("NONE")))
+		{
+			return BodycamLaserNoneEnum;
+		}
+		return BodycamLaserNoneEnum;
+	}
+
+	/** Survives menu close — Bodycam slot/ItemData often store Laser(4) when the combo said FLASH. */
+	static TMap<TWeakObjectPtr<AActor>, uint8> LatchedLaserEnumByWeapon;
+
+	static void LatchLaserEnumForWeapon(AActor* Weapon, const uint8 EnumValue)
+	{
+		if (Weapon)
+		{
+			LatchedLaserEnumByWeapon.Add(Weapon, EnumValue);
+		}
+	}
 
 	static UStaticMesh* GetLaserBeamMesh()
 	{
@@ -359,6 +442,30 @@ namespace SCARWeaponAttachmentInternal
 	{
 		static UMaterialInterface* CachedMaterial = LoadObject<UMaterialInterface>(nullptr, LaserBeamMaterialPath);
 		return CachedMaterial;
+	}
+
+	static UMaterialInterface* GetHorrorFlashLightFunction()
+	{
+		static UMaterialInterface* CachedMaterial = LoadObject<UMaterialInterface>(nullptr, HorrorFlashLightFunctionPath);
+		return CachedMaterial;
+	}
+
+	static UTexture* GetHorrorFlashCookieTexture()
+	{
+		static UTexture* CachedTexture = LoadObject<UTexture>(nullptr, HorrorFlashCookieTexturePath);
+		return CachedTexture;
+	}
+
+	static UMaterialInterface* GetSoftFlashSpotMaterial()
+	{
+		static UMaterialInterface* CachedMaterial = LoadObject<UMaterialInterface>(nullptr, SoftFlashSpotMaterialPath);
+		return CachedMaterial;
+	}
+
+	static UStaticMesh* GetFlashSpotPlaneMesh()
+	{
+		static UStaticMesh* CachedMesh = LoadObject<UStaticMesh>(nullptr, FlashSpotPlaneMeshPath);
+		return CachedMesh;
 	}
 
 	static constexpr TCHAR LaserAttachmentMeshPath[] =
@@ -373,6 +480,15 @@ namespace SCARWeaponAttachmentInternal
 	static void MirrorWeaponPrimitiveRendering(UPrimitiveComponent* Target, const UPrimitiveComponent* Template);
 
 	static AActor* GetWeaponObjectRef(AActor* Weapon, const FName PropertyName);
+
+	static bool ReadAttachmentValue(
+		AActor* Character,
+		const ESCARWeaponAttachmentCategory Category,
+		uint8& OutValue);
+	static bool WriteAttachmentValue(
+		AActor* Character,
+		const ESCARWeaponAttachmentCategory Category,
+		const uint8 Value);
 
 	static void ConfigureARAttachmentPrimitive(
 		UPrimitiveComponent* Component,
@@ -431,16 +547,45 @@ namespace SCARWeaponAttachmentInternal
 		Light->SetVisibility(bVisible);
 		Light->SetCastShadows(false);
 
-		constexpr float FlashlightIntensity = 30000.f;
-		if (bVisible)
+		// FirstPersonHorrorKit flashlight: SpotLight + M_Light (exact asset cookie), tight cone.
+		constexpr float FlashlightIntensity = 80.f; // candelas
+		if (USpotLightComponent* SpotLight = Cast<USpotLightComponent>(Light))
 		{
-			Light->SetIntensity(FlashlightIntensity);
-			if (USpotLightComponent* SpotLight = Cast<USpotLightComponent>(Light))
+			if (bVisible)
 			{
-				SpotLight->SetAttenuationRadius(8000.f);
-				SpotLight->SetInnerConeAngle(18.f);
-				SpotLight->SetOuterConeAngle(42.f);
+				if (UMaterialInterface* LightFunction = GetHorrorFlashLightFunction())
+				{
+					SpotLight->SetLightFunctionMaterial(LightFunction);
+					SpotLight->SetLightFunctionScale(FVector(1.f, 1.f, 1.f));
+					SpotLight->SetLightFunctionFadeDistance(0.f);
+				}
+
+				SpotLight->SetMobility(EComponentMobility::Movable);
+				SpotLight->SetIntensityUnits(ELightUnits::Candelas);
+				SpotLight->SetIntensity(FlashlightIntensity);
+				SpotLight->SetAttenuationRadius(4000.f);
+				SpotLight->SetInnerConeAngle(FlashInnerConeDegrees);
+				SpotLight->SetOuterConeAngle(FlashOuterConeDegrees);
+				SpotLight->SetLightColor(FLinearColor(1.f, 1.f, 0.97f));
+				SpotLight->SetUseInverseSquaredFalloff(true);
+				SpotLight->SetVisibility(true);
+				SpotLight->SetHiddenInGame(false);
+				SpotLight->SetCastShadows(false);
+				SpotLight->SetLightingChannels(false, true, false);
 			}
+			else
+			{
+				SpotLight->SetLightFunctionMaterial(nullptr);
+				SpotLight->SetIntensity(0.f);
+			}
+		}
+		else if (bVisible)
+		{
+			Light->SetIntensity(FlashlightIntensity * 1000.f);
+		}
+		else
+		{
+			Light->SetIntensity(0.f);
 		}
 	}
 
@@ -674,7 +819,11 @@ namespace SCARWeaponAttachmentInternal
 		BeamComponent->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
 		BeamComponent->SetWorldLocation(EmissionStart);
 		BeamComponent->SetWorldRotation(EmissionFrame.Rotation);
-		BeamComponent->SetWorldScale3D(FVector(ScaleAxis, 1.f, 1.f));
+		// Thicker beam in AR/PIE so it reads clearly over passthrough camera.
+		const bool bMobileAr = BeamComponent->GetWorld()
+			&& SCARPhonePreviewParity::ShouldUseMobileCameraPath(BeamComponent->GetWorld());
+		const float Thickness = bMobileAr ? 3.5f : 1.f;
+		BeamComponent->SetWorldScale3D(FVector(ScaleAxis, Thickness, Thickness));
 	}
 
 	static bool IsMobileArPassthroughWorld(const UWorld* World)
@@ -694,8 +843,14 @@ namespace SCARWeaponAttachmentInternal
 		Component->SetOwnerNoSee(false);
 		Component->SetOnlyOwnerSee(false);
 		Component->SetCastHiddenShadow(false);
-		Component->SetBoundsScale(8.f);
+		Component->SetCastShadow(false);
+		Component->SetBoundsScale(16.f);
+		Component->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		Component->SetGenerateOverlapEvents(false);
+		// Draw in foreground so the beam/cone composites over AR passthrough in PIE and device.
+		Component->SetDepthPriorityGroup(SDPG_Foreground);
 		Component->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::WorldSpaceRepresentation);
+		Component->SetTranslucentSortPriority(100);
 	}
 
 	static void MirrorWeaponPrimitiveRendering(UPrimitiveComponent* Target, const UPrimitiveComponent* Template)
@@ -722,7 +877,10 @@ namespace SCARWeaponAttachmentInternal
 		TInlineComponentArray<UStaticMeshComponent*> MeshComponents(Owner);
 		for (UStaticMeshComponent* MeshComponent : MeshComponents)
 		{
-			if (MeshComponent && MeshComponent->GetFName() == ComponentName)
+			if (MeshComponent
+				&& IsValid(MeshComponent)
+				&& !MeshComponent->IsUnreachable()
+				&& MeshComponent->GetFName() == ComponentName)
 			{
 				return MeshComponent;
 			}
@@ -880,7 +1038,8 @@ namespace SCARWeaponAttachmentInternal
 
 	static void EnsureArLaserBeamOnWeapon(AActor* Weapon, const bool bVisible, const UPrimitiveComponent* RenderTemplate)
 	{
-		USceneComponent* AttachParent = FindArLaserBeamAttachParent(Weapon);
+		// Attach under weapon root so hiding Bodycam LaserBeam never hides this overlay.
+		USceneComponent* AttachParent = Weapon ? Weapon->GetRootComponent() : nullptr;
 		const FLaserEmissionFrame EmissionFrame = ResolveLaserEmissionFrame(Weapon);
 		if (!AttachParent || !EmissionFrame.bValid)
 		{
@@ -923,31 +1082,10 @@ namespace SCARWeaponAttachmentInternal
 		float BeamDistance = 5000.f;
 		FVector HitLocation = FVector::ZeroVector;
 		TraceLaserBeamHitFromFrame(Weapon, EmissionFrame, HitLocation, BeamDistance);
+		BeamDistance = FMath::Max(BeamDistance, 800.f);
 
-		const bool bAttachedToBodycamBeamOrigin = FindLaserBeamOriginOnLaserRef(Weapon) != nullptr;
-		if (bMobileAr || !bAttachedToBodycamBeamOrigin)
-		{
-			ApplyArLaserBeamWorldTransform(BeamComponent, EmissionFrame, BeamDistance);
-		}
-		else
-		{
-			BeamComponent->AttachToComponent(
-				AttachParent,
-				FAttachmentTransformRules::SnapToTargetIncludingScale);
-
-			float MeshLength = 100.f;
-			if (const UStaticMesh* BeamMeshAsset = BeamComponent->GetStaticMesh())
-			{
-				const FBoxSphereBounds Bounds = BeamMeshAsset->GetBounds();
-				MeshLength = FMath::Max(Bounds.BoxExtent.X * 2.f, 1.f);
-			}
-
-			const float ScaleAxis = BeamDistance / MeshLength;
-			const float ForwardOffset = BoundsCorrectionFromMesh(BeamComponent, 1.f);
-			BeamComponent->SetRelativeLocation(FVector(ForwardOffset, 0.f, 0.f));
-			BeamComponent->SetRelativeRotation(FRotator::ZeroRotator);
-			BeamComponent->SetRelativeScale3D(FVector(ScaleAxis, 1.f, 1.f));
-		}
+		// Always world-space scale so the full beam is visible from hipfire (not only reload/ADS).
+		ApplyArLaserBeamWorldTransform(BeamComponent, EmissionFrame, BeamDistance);
 	}
 
 	static void EnsureArLaserDotOnWeapon(AActor* Weapon, const bool bVisible)
@@ -999,48 +1137,270 @@ namespace SCARWeaponAttachmentInternal
 		DotComponent->SetWorldScale3D(FVector(0.08f));
 	}
 
-	static void EnsureArFlashGlowOnWeapon(AActor* Weapon, const bool bVisible, const UPrimitiveComponent* RenderTemplate)
+	static void DestroyScarFlashConeMeshes(AActor* Owner)
 	{
-		USceneComponent* AttachParent = FindLaserAttachParent(Weapon);
-		if (!AttachParent)
+		if (!Owner)
 		{
 			return;
 		}
 
-		UStaticMeshComponent* GlowComponent =
-			FindOrAddArStaticMeshComponent(Weapon, ScarArFlashGlowComponentName, AttachParent);
-		if (!GlowComponent)
+		for (const FName ComponentName :
+			{ ScarArFlashConeComponentName,
+			  ScarArFlashGlowComponentName,
+			  FName(TEXT("SCAR_FlashCone")) })
+		{
+			if (UStaticMeshComponent* Mesh = FindNamedStaticMeshComponent(Owner, ComponentName))
+			{
+				Mesh->SetHiddenInGame(true);
+				Mesh->SetVisibility(false, true);
+				Mesh->DestroyComponent();
+			}
+		}
+
+		TInlineComponentArray<UStaticMeshComponent*> Meshes(Owner);
+		for (UStaticMeshComponent* Mesh : Meshes)
+		{
+			if (!Mesh)
+			{
+				continue;
+			}
+			const FString Name = Mesh->GetName();
+			// Keep SCAR_AR_FlashSpot — that is the AR passthrough cookie overlay.
+			if (Name.Contains(TEXT("SCAR_FlashCone"), ESearchCase::IgnoreCase)
+				|| Name.Contains(TEXT("SCAR_AR_FlashCone"), ESearchCase::IgnoreCase)
+				|| Name.Contains(TEXT("SCAR_AR_FlashGlow"), ESearchCase::IgnoreCase))
+			{
+				Mesh->SetHiddenInGame(true);
+				Mesh->SetVisibility(false, true);
+				Mesh->DestroyComponent();
+			}
+		}
+	}
+
+	static USpotLightComponent* FindFlashlightSpotLight(AActor* LaserActor)
+	{
+		if (!LaserActor)
+		{
+			return nullptr;
+		}
+
+		TInlineComponentArray<USpotLightComponent*> SpotLights(LaserActor);
+		for (USpotLightComponent* SpotLight : SpotLights)
+		{
+			if (SpotLight && SpotLight->GetName().Contains(TEXT("Flash"), ESearchCase::IgnoreCase))
+			{
+				return SpotLight;
+			}
+		}
+		return SpotLights.Num() > 0 ? SpotLights[0] : nullptr;
+	}
+
+	/** Exact zombie-pack flashlight: SpotLight + M_Light. Stay attached — never detach (causes FP arm jitter). */
+	static void EnsureHorrorKitFlashlightSpot(AActor* LaserActor, AActor* Weapon, const bool bVisible)
+	{
+		if (!LaserActor)
 		{
 			return;
 		}
 
-		if (UStaticMesh* HousingMesh = GetLaserAttachmentMesh())
+		USpotLightComponent* SpotLight = FindFlashlightSpotLight(LaserActor);
+		if (!SpotLight && bVisible)
 		{
-			GlowComponent->SetStaticMesh(HousingMesh);
+			USceneComponent* AttachParent = LaserActor->GetRootComponent();
+			if (!AttachParent && Weapon)
+			{
+				AttachParent = FindLaserAttachParent(Weapon);
+			}
+			if (!AttachParent)
+			{
+				return;
+			}
+
+			SpotLight = NewObject<USpotLightComponent>(
+				LaserActor,
+				USpotLightComponent::StaticClass(),
+				TEXT("SCAR_HorrorFlashSpot"),
+				RF_Transient);
+			if (!SpotLight)
+			{
+				return;
+			}
+
+			SpotLight->SetupAttachment(AttachParent);
+			SpotLight->SetRelativeLocation(FVector::ZeroVector);
+			SpotLight->SetRelativeRotation(FRotator::ZeroRotator);
+			LaserActor->AddInstanceComponent(SpotLight);
+			SpotLight->RegisterComponent();
 		}
 
-		if (UMaterialInstanceDynamic* DynamicMaterial = UMaterialInstanceDynamic::Create(
-				GetLaserBeamMaterial(),
-				GlowComponent))
+		if (!SpotLight)
 		{
-			DynamicMaterial->SetVectorParameterValue(TEXT("EmissiveColor"), FLinearColor(30.f, 28.f, 20.f));
-			DynamicMaterial->SetScalarParameterValue(TEXT("EmissiveStrength"), 80.f);
-			GlowComponent->SetMaterial(0, DynamicMaterial);
+			return;
 		}
 
-		if (Weapon->GetWorld() && IsMobileArPassthroughWorld(Weapon->GetWorld()))
+		ConfigureARAttachmentLight(SpotLight, bVisible);
+		if (bVisible)
 		{
-			ConfigureMobileArOverlayPrimitive(GlowComponent, bVisible);
+			// Keep hierarchy intact — LaserActor already tracks the weapon/arms aim.
+			if (SpotLight->GetAttachParent() == nullptr && LaserActor->GetRootComponent())
+			{
+				SpotLight->AttachToComponent(
+					LaserActor->GetRootComponent(),
+					FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+			}
+			SpotLight->SetRelativeLocation(FVector::ZeroVector);
+			SpotLight->SetRelativeRotation(FRotator::ZeroRotator);
+			SpotLight->SetVisibility(true);
+			SpotLight->SetHiddenInGame(false);
+			SpotLight->SetActive(true);
 		}
 		else
 		{
-			MirrorWeaponPrimitiveRendering(GlowComponent, RenderTemplate);
-			ConfigureARAttachmentPrimitive(GlowComponent, bVisible);
+			SpotLight->SetActive(false);
 		}
-		if (bVisible)
+	}
+
+	/**
+	 * SpotLights cannot light AR camera passthrough. Overlay the exact M_Light cookie
+	 * (T_FlashlightD) as a small additive disc. Uses absolute world transform only —
+	 * never attach/detach from the weapon skeletal mesh (that jittered FP arms).
+	 */
+	static void EnsureArFlashCookieOverlay(AActor* Weapon, const bool bVisible)
+	{
+		if (!Weapon)
 		{
-			GlowComponent->SetRelativeScale3D(FVector(1.2f));
+			return;
 		}
+
+		if (!bVisible)
+		{
+			if (UStaticMeshComponent* Existing = FindNamedStaticMeshComponent(Weapon, ScarArFlashSpotComponentName))
+			{
+				Existing->SetHiddenInGame(true);
+				Existing->SetVisibility(false, true);
+				Existing->DestroyComponent();
+			}
+			return;
+		}
+
+		const FLaserEmissionFrame EmissionFrame = ResolveLaserEmissionFrame(Weapon);
+		if (!EmissionFrame.bValid)
+		{
+			return;
+		}
+
+		const FVector Forward = EmissionFrame.Rotation.Vector();
+		FVector HitLocation = EmissionFrame.Location + Forward * 320.f;
+		FVector FaceNormal = -Forward;
+		float HitDistance = 320.f;
+
+		if (UWorld* World = Weapon->GetWorld())
+		{
+			const FVector End = EmissionFrame.Location + Forward * 10000.f;
+			FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(ScarFlashCookieTrace), true, Weapon);
+			QueryParams.AddIgnoredActor(Weapon);
+			if (AActor* LaserRef = GetWeaponObjectRef(Weapon, TEXT("LaserRef")))
+			{
+				QueryParams.AddIgnoredActor(LaserRef);
+			}
+
+			FHitResult Hit;
+			if (World->LineTraceSingleByChannel(Hit, EmissionFrame.Location, End, ECC_Visibility, QueryParams))
+			{
+				HitLocation = Hit.ImpactPoint + Hit.ImpactNormal * 1.5f;
+				FaceNormal = Hit.ImpactNormal;
+				HitDistance = FMath::Clamp(Hit.Distance, 100.f, 2200.f);
+			}
+		}
+
+		UStaticMeshComponent* CookieComponent = FindNamedStaticMeshComponent(Weapon, ScarArFlashSpotComponentName);
+		if (!CookieComponent)
+		{
+			USceneComponent* Root = Weapon->GetRootComponent();
+			if (!Root)
+			{
+				return;
+			}
+
+			CookieComponent = NewObject<UStaticMeshComponent>(
+				Weapon,
+				UStaticMeshComponent::StaticClass(),
+				ScarArFlashSpotComponentName,
+				RF_Transient);
+			if (!CookieComponent)
+			{
+				return;
+			}
+
+			// Attach to weapon root once, then use absolute world transform so we never
+			// re-parent against the animated ItemMesh / FP arms hierarchy.
+			CookieComponent->SetupAttachment(Root);
+			Weapon->AddInstanceComponent(CookieComponent);
+			CookieComponent->RegisterComponent();
+			CookieComponent->SetUsingAbsoluteLocation(true);
+			CookieComponent->SetUsingAbsoluteRotation(true);
+			CookieComponent->SetUsingAbsoluteScale(true);
+
+			if (UStaticMesh* PlaneMesh = GetFlashSpotPlaneMesh())
+			{
+				CookieComponent->SetStaticMesh(PlaneMesh);
+			}
+
+			if (UMaterialInterface* CookieMaterial = GetSoftFlashSpotMaterial())
+			{
+				if (UMaterialInstanceDynamic* DynamicMaterial =
+						UMaterialInstanceDynamic::Create(CookieMaterial, CookieComponent))
+				{
+					if (UTexture* Cookie = GetHorrorFlashCookieTexture())
+					{
+						DynamicMaterial->SetTextureParameterValue(TEXT("Cookie"), Cookie);
+					}
+					DynamicMaterial->SetScalarParameterValue(TEXT("Strength"), 4.5f);
+					DynamicMaterial->SetScalarParameterValue(TEXT("Softness"), 0.70f);
+					DynamicMaterial->SetScalarParameterValue(TEXT("Spill"), 0.30f);
+					DynamicMaterial->SetVectorParameterValue(
+						TEXT("Tint"),
+						FLinearColor(0.97f, 0.98f, 1.f, 1.f));
+					CookieComponent->SetMaterial(0, DynamicMaterial);
+				}
+				else
+				{
+					CookieComponent->SetMaterial(0, CookieMaterial);
+				}
+			}
+
+			ConfigureMobileArOverlayPrimitive(CookieComponent, true);
+			CookieComponent->SetCastShadow(false);
+			CookieComponent->SetTranslucentSortPriority(120);
+		}
+		else
+		{
+			CookieComponent->SetHiddenInGame(false);
+			CookieComponent->SetVisibility(true, true);
+			CookieComponent->SetUsingAbsoluteLocation(true);
+			CookieComponent->SetUsingAbsoluteRotation(true);
+			CookieComponent->SetUsingAbsoluteScale(true);
+		}
+
+		const float SpotRadius =
+			HitDistance * FMath::Tan(FMath::DegreesToRadians(FlashOuterConeDegrees)) * 1.12f;
+		float MeshHalfSize = 50.f;
+		if (const UStaticMesh* PlaneAsset = CookieComponent->GetStaticMesh())
+		{
+			const FBox BoundingBox = PlaneAsset->GetBoundingBox();
+			MeshHalfSize = FMath::Max(0.5f * FMath::Max(BoundingBox.GetSize().X, BoundingBox.GetSize().Y), 1.f);
+		}
+		const float ScaleXY = FMath::Clamp(SpotRadius / MeshHalfSize, 0.15f, 22.f);
+
+		CookieComponent->SetWorldLocation(HitLocation);
+		CookieComponent->SetWorldRotation(FRotationMatrix::MakeFromZ(FaceNormal).Rotator());
+		CookieComponent->SetWorldScale3D(FVector(ScaleXY, ScaleXY, 1.f));
+	}
+
+	static void EnsureArFlashGlowOnWeapon(AActor* Weapon, const bool bVisible, const UPrimitiveComponent* RenderTemplate)
+	{
+		(void)RenderTemplate;
+		EnsureArFlashCookieOverlay(Weapon, bVisible);
 	}
 
 	static AActor* ResolveBodycamCharacter(APawn* Pawn)
@@ -1059,33 +1419,235 @@ namespace SCARWeaponAttachmentInternal
 		return BodycamCharacterClass && Pawn->IsA(BodycamCharacterClass) ? Pawn : nullptr;
 	}
 
+	static uint8 ReadLaserEnumFromObjectItemData(UObject* Owner)
+	{
+		if (!Owner)
+		{
+			return BodycamLaserNoneEnum;
+		}
+
+		FStructProperty* ItemDataProperty = GetItemDataProperty(Owner->GetClass());
+		if (!ItemDataProperty)
+		{
+			return BodycamLaserNoneEnum;
+		}
+
+		const void* ItemData = ItemDataProperty->ContainerPtrToValuePtr<void>(Owner);
+		FStructProperty* AttachmentsProperty = GetAttachmentsProperty(ItemDataProperty);
+		if (!AttachmentsProperty)
+		{
+			return BodycamLaserNoneEnum;
+		}
+
+		const void* AttachmentsData = AttachmentsProperty->ContainerPtrToValuePtr<void>(ItemData);
+		FProperty* LaserField = GetAttachmentField(AttachmentsProperty, ESCARWeaponAttachmentCategory::Laser);
+		if (!LaserField)
+		{
+			return BodycamLaserNoneEnum;
+		}
+
+		return NormalizeBodycamLaserEnum(ReadByteProperty(LaserField, AttachmentsData));
+	}
+
+	static uint8 ReadLaserEnumFromEquippedSlot(AActor* Character)
+	{
+		if (!Character)
+		{
+			return BodycamLaserNoneEnum;
+		}
+
+		FStructProperty* SlotProperty = GetEquippedSlotProperty(Character);
+		if (!SlotProperty)
+		{
+			return BodycamLaserNoneEnum;
+		}
+
+		const void* SlotData = SlotProperty->ContainerPtrToValuePtr<void>(Character);
+		FStructProperty* AttachmentsProperty = GetAttachmentsProperty(SlotProperty);
+		if (!AttachmentsProperty)
+		{
+			return BodycamLaserNoneEnum;
+		}
+
+		const void* AttachmentsData = AttachmentsProperty->ContainerPtrToValuePtr<void>(SlotData);
+		FProperty* LaserField = GetAttachmentField(AttachmentsProperty, ESCARWeaponAttachmentCategory::Laser);
+		if (!LaserField)
+		{
+			return BodycamLaserNoneEnum;
+		}
+
+		return NormalizeBodycamLaserEnum(ReadByteProperty(LaserField, AttachmentsData));
+	}
+
+	static UUserWidget* GetModdingWidget(AActor* Character)
+	{
+		if (!Character)
+		{
+			return nullptr;
+		}
+
+		FObjectProperty* UIModdingProperty =
+			CastField<FObjectProperty>(FindExactProperty(Character->GetClass(), TEXT("UI_Modding")));
+		if (!UIModdingProperty)
+		{
+			return nullptr;
+		}
+
+		return Cast<UUserWidget>(UIModdingProperty->GetObjectPropertyValue_InContainer(Character));
+	}
+
+	static uint8 ReadLaserEnumFromModdingWidget(AActor* Character)
+	{
+		return ReadLaserEnumFromObjectItemData(GetModdingWidget(Character));
+	}
+
+	static bool ReadLaserEnumFromModdingCombo(AActor* Character, uint8& OutEnum)
+	{
+		UUserWidget* ModdingWidget = GetModdingWidget(Character);
+		if (!ModdingWidget || !ModdingWidget->WidgetTree)
+		{
+			return false;
+		}
+
+		// Prefer the Laser combo's selected label — Bodycam fills options as EMPTY/LASER/FLASH
+		// but may write GetEnumeratorValueFromIndex(comboIndex), which maps FLASH → Laser(4).
+		TArray<UWidget*> AllWidgets;
+		ModdingWidget->WidgetTree->GetAllWidgets(AllWidgets);
+		for (UWidget* Widget : AllWidgets)
+		{
+			UComboBoxString* Combo = Cast<UComboBoxString>(Widget);
+			if (!Combo)
+			{
+				continue;
+			}
+
+			const FString WidgetName = Combo->GetName();
+			const bool bLooksLikeLaserCombo = WidgetName.Contains(TEXT("Laser"), ESearchCase::IgnoreCase)
+				|| Combo->FindOptionIndex(TEXT("FLASH")) != INDEX_NONE
+				|| Combo->FindOptionIndex(TEXT("Flash")) != INDEX_NONE;
+			if (!bLooksLikeLaserCombo)
+			{
+				continue;
+			}
+
+			const FString Selected = Combo->GetSelectedOption();
+			if (Selected.IsEmpty())
+			{
+				continue;
+			}
+
+			OutEnum = MapLaserOptionLabelToEnum(Selected);
+			return true;
+		}
+
+		return false;
+	}
+
+	static void WriteWeaponLaserEnum(AActor* Weapon, const uint8 Value)
+	{
+		if (!Weapon)
+		{
+			return;
+		}
+
+		FStructProperty* ItemDataProperty = GetItemDataProperty(Weapon->GetClass());
+		if (!ItemDataProperty)
+		{
+			return;
+		}
+
+		void* ItemData = ItemDataProperty->ContainerPtrToValuePtr<void>(Weapon);
+		FStructProperty* AttachmentsProperty = GetAttachmentsProperty(ItemDataProperty);
+		if (!AttachmentsProperty)
+		{
+			return;
+		}
+
+		void* AttachmentsData = AttachmentsProperty->ContainerPtrToValuePtr<void>(ItemData);
+		if (FProperty* LaserField = GetAttachmentField(AttachmentsProperty, ESCARWeaponAttachmentCategory::Laser))
+		{
+			WriteByteProperty(LaserField, AttachmentsData, Value);
+		}
+	}
+
+	static bool ReadActorBoolProperty(AActor* Actor, const TCHAR* PropertyName, bool& OutValue)
+	{
+		if (!Actor || !PropertyName)
+		{
+			return false;
+		}
+
+		if (FBoolProperty* BoolProperty =
+				CastField<FBoolProperty>(FindExactProperty(Actor->GetClass(), PropertyName)))
+		{
+			OutValue = BoolProperty->GetPropertyValue_InContainer(Actor);
+			return true;
+		}
+
+		return false;
+	}
+
+	static uint8 InferLaserEnumFromLaserRef(AActor* Weapon)
+	{
+		AActor* LaserRef = GetWeaponObjectRef(Weapon, TEXT("LaserRef"));
+		if (!LaserRef || !IsValid(LaserRef) || LaserRef->IsActorBeingDestroyed())
+		{
+			return BodycamLaserNoneEnum;
+		}
+
+		// Bodycam UI_WeaponModding SpawnAttachments creates BP_Laser for both Flash and Laser.
+		// Distinguish via UseFlashlight — never assume LaserRef always means beam mode.
+		bool bUseFlashlight = false;
+		if (ReadActorBoolProperty(LaserRef, TEXT("UseFlashlight"), bUseFlashlight))
+		{
+			return bUseFlashlight ? BodycamLaserFlashEnum : BodycamLaserBeamEnum;
+		}
+
+		bool bLaserActive = false;
+		if (ReadActorBoolProperty(LaserRef, TEXT("LaserActive"), bLaserActive) && bLaserActive)
+		{
+			return BodycamLaserBeamEnum;
+		}
+
+		return BodycamLaserBeamEnum;
+	}
+
 	static uint8 ResolveAttachmentLaserEnum(AActor* Character, AActor* Weapon)
 	{
-		uint8 AttachmentLaserEnum = ReadWeaponLaserEnum(Weapon);
-		if (AttachmentLaserEnum == BodycamLaserNoneEnum && Character)
+		// Attachments menu combo label is authoritative: Bodycam may store Laser(4) when the
+		// user picked FLASH because combo order (EMPTY,LASER,FLASH) != enum index order.
+		uint8 ComboEnum = BodycamLaserNoneEnum;
+		if (ReadLaserEnumFromModdingCombo(Character, ComboEnum))
 		{
-			FStructProperty* SlotProperty = GetEquippedSlotProperty(Character);
-			if (SlotProperty)
-			{
-				const void* SlotData = SlotProperty->ContainerPtrToValuePtr<void>(Character);
-				FStructProperty* AttachmentsProperty = GetAttachmentsProperty(SlotProperty);
-				if (AttachmentsProperty)
-				{
-					const void* AttachmentsData = AttachmentsProperty->ContainerPtrToValuePtr<void>(SlotData);
-					if (FProperty* LaserField = GetAttachmentField(AttachmentsProperty, ESCARWeaponAttachmentCategory::Laser))
-					{
-						AttachmentLaserEnum = ReadByteProperty(LaserField, AttachmentsData);
-					}
-				}
-			}
+			LatchLaserEnumForWeapon(Weapon, ComboEnum);
+			return ComboEnum;
 		}
 
-		if (AttachmentLaserEnum == BodycamLaserNoneEnum && GetWeaponObjectRef(Weapon, TEXT("LaserRef")))
+		// Menu closed — keep the last combo selection so Refresh/CopySlot can't revert FLASH→LASER.
+		if (const uint8* Latched = LatchedLaserEnumByWeapon.Find(Weapon))
 		{
-			AttachmentLaserEnum = BodycamLaserBeamEnum;
+			return *Latched;
 		}
 
-		return AttachmentLaserEnum;
+		const uint8 WeaponEnum = NormalizeBodycamLaserEnum(ReadWeaponLaserEnum(Weapon));
+		if (WeaponEnum != BodycamLaserNoneEnum)
+		{
+			return WeaponEnum;
+		}
+
+		const uint8 SlotEnum = ReadLaserEnumFromEquippedSlot(Character);
+		if (SlotEnum != BodycamLaserNoneEnum)
+		{
+			return SlotEnum;
+		}
+
+		const uint8 WidgetEnum = ReadLaserEnumFromModdingWidget(Character);
+		if (WidgetEnum != BodycamLaserNoneEnum)
+		{
+			return WidgetEnum;
+		}
+
+		return InferLaserEnumFromLaserRef(Weapon);
 	}
 
 	static void InvokeLaserDotTrace(AActor* LaserActor)
@@ -1130,21 +1692,208 @@ namespace SCARWeaponAttachmentInternal
 		InvokeLaserActiveReplication(LaserActor);
 	}
 
-	static void HideScarArOverlayComponents(AActor* Weapon)
+	static void SetLaserActorUseFlashlightFlag(AActor* LaserActor, const bool bUseFlashlight)
+	{
+		if (!LaserActor)
+		{
+			return;
+		}
+
+		if (FBoolProperty* UseFlashlightProperty = CastField<FBoolProperty>(
+				FindExactProperty(LaserActor->GetClass(), TEXT("UseFlashlight"))))
+		{
+			UseFlashlightProperty->SetPropertyValue_InContainer(LaserActor, bUseFlashlight);
+		}
+	}
+
+	static void InvokeActorBoolFunction(AActor* Target, const FName FunctionName, const bool bValue)
+	{
+		if (!Target)
+		{
+			return;
+		}
+
+		UFunction* Function = Target->FindFunction(FunctionName);
+		if (!Function || Function->ParmsSize <= 0)
+		{
+			return;
+		}
+
+		void* Parms = FMemory_Alloca(Function->ParmsSize);
+		FMemory::Memzero(Parms, Function->ParmsSize);
+
+		for (TFieldIterator<FProperty> It(Function); It && (It->PropertyFlags & CPF_Parm); ++It)
+		{
+			if (It->HasAnyPropertyFlags(CPF_ReturnParm))
+			{
+				continue;
+			}
+
+			if (FBoolProperty* BoolProperty = CastField<FBoolProperty>(*It))
+			{
+				BoolProperty->SetPropertyValue_InContainer(Parms, bValue);
+				break;
+			}
+		}
+
+		Target->ProcessEvent(Function, Parms);
+	}
+
+	static void ClearWeaponObjectRef(AActor* Weapon, const FName PropertyName)
 	{
 		if (!Weapon)
 		{
 			return;
 		}
 
-		for (const FName ComponentName : { ScarArLaserBeamComponentName, ScarArLaserDotComponentName, ScarArFlashGlowComponentName })
+		if (FObjectProperty* Property = CastField<FObjectProperty>(
+				Weapon->GetClass()->FindPropertyByName(PropertyName)))
+		{
+			Property->SetObjectPropertyValue_InContainer(Weapon, nullptr);
+		}
+	}
+
+	static bool IsBodycamLaserActor(const AActor* Actor)
+	{
+		return Actor && Actor->GetClass()->GetName().Contains(TEXT("BP_Laser"));
+	}
+
+	static void DestroyScarArOverlayComponents(AActor* Weapon)
+	{
+		if (!Weapon)
+		{
+			return;
+		}
+
+		for (const FName ComponentName :
+			{ ScarArLaserBeamComponentName,
+			  ScarArLaserDotComponentName,
+			  ScarArFlashGlowComponentName,
+			  ScarArFlashConeComponentName,
+			  ScarArFlashSpotComponentName })
 		{
 			if (UStaticMeshComponent* Overlay = FindNamedStaticMeshComponent(Weapon, ComponentName))
 			{
 				Overlay->SetHiddenInGame(true);
 				Overlay->SetVisibility(false, true);
+				Overlay->DestroyComponent();
 			}
 		}
+	}
+
+	static void DestroyScarArLaserOverlays(AActor* Weapon)
+	{
+		if (!Weapon)
+		{
+			return;
+		}
+
+		for (const FName ComponentName : { ScarArLaserBeamComponentName, ScarArLaserDotComponentName })
+		{
+			if (UStaticMeshComponent* Overlay = FindNamedStaticMeshComponent(Weapon, ComponentName))
+			{
+				Overlay->SetHiddenInGame(true);
+				Overlay->SetVisibility(false, true);
+				Overlay->DestroyComponent();
+			}
+		}
+	}
+
+	static void HideScarArOverlayComponents(AActor* Weapon)
+	{
+		DestroyScarArOverlayComponents(Weapon);
+	}
+
+	static void DestroyBodycamLaserActor(AActor* LaserActor)
+	{
+		if (!IsValid(LaserActor))
+		{
+			return;
+		}
+
+		LaserActor->SetActorTickEnabled(false);
+		LaserActor->SetActorHiddenInGame(true);
+
+		TInlineComponentArray<USceneComponent*> Components(LaserActor);
+		for (USceneComponent* Component : Components)
+		{
+			if (Component)
+			{
+				Component->SetVisibility(false, true);
+				Component->SetHiddenInGame(true);
+			}
+		}
+
+		LaserActor->Destroy();
+	}
+
+	static void DestroyAllBodycamLaserActorsForWeapon(AActor* Weapon)
+	{
+		if (!Weapon)
+		{
+			return;
+		}
+
+		TSet<AActor*> ToDestroy;
+
+		if (AActor* LaserRef = GetWeaponObjectRef(Weapon, TEXT("LaserRef")))
+		{
+			ToDestroy.Add(LaserRef);
+		}
+		if (AActor* AkimboLaserRef = GetWeaponObjectRef(Weapon, TEXT("AkimboLaserRef")))
+		{
+			ToDestroy.Add(AkimboLaserRef);
+		}
+
+		TArray<AActor*> AttachedActors;
+		Weapon->GetAttachedActors(AttachedActors, true, true);
+		for (AActor* AttachedActor : AttachedActors)
+		{
+			if (IsBodycamLaserActor(AttachedActor))
+			{
+				ToDestroy.Add(AttachedActor);
+			}
+		}
+
+		// Bodycam None can detach BP_Laser without destroying it — sweep orphans by owner.
+		if (UWorld* World = Weapon->GetWorld())
+		{
+			static TMap<TWeakObjectPtr<AActor>, double> LastOrphanSweepSeconds;
+			const double Now = static_cast<double>(World->GetTimeSeconds());
+			bool bShouldSweepWorld = true;
+			if (const double* LastSweep = LastOrphanSweepSeconds.Find(Weapon))
+			{
+				bShouldSweepWorld = (Now - *LastSweep) >= 0.25;
+			}
+
+			if (bShouldSweepWorld)
+			{
+				LastOrphanSweepSeconds.Add(Weapon, Now);
+				for (TActorIterator<AActor> It(World); It; ++It)
+				{
+					AActor* Candidate = *It;
+					if (!IsBodycamLaserActor(Candidate) || ToDestroy.Contains(Candidate))
+					{
+						continue;
+					}
+
+					if (Candidate->GetOwner() == Weapon || Candidate->GetAttachParentActor() == Weapon)
+					{
+						ToDestroy.Add(Candidate);
+					}
+				}
+			}
+		}
+
+		ClearWeaponObjectRef(Weapon, TEXT("LaserRef"));
+		ClearWeaponObjectRef(Weapon, TEXT("AkimboLaserRef"));
+
+		for (AActor* LaserActor : ToDestroy)
+		{
+			DestroyBodycamLaserActor(LaserActor);
+		}
+
+		DestroyScarArOverlayComponents(Weapon);
 	}
 
 	static void DestroyOrphanBodycamLaserActors(AActor* Weapon, AActor* ActiveLaserRef)
@@ -1163,11 +1912,22 @@ namespace SCARWeaponAttachmentInternal
 				continue;
 			}
 
-			if (AttachedActor->GetClass()->GetName().Contains(TEXT("BP_Laser")))
+			if (IsBodycamLaserActor(AttachedActor))
 			{
-				AttachedActor->Destroy();
+				DestroyBodycamLaserActor(AttachedActor);
 			}
 		}
+	}
+
+	static void SetSceneComponentVisible(USceneComponent* Component, const bool bVisible)
+	{
+		if (!Component)
+		{
+			return;
+		}
+
+		Component->SetHiddenInGame(!bVisible);
+		Component->SetVisibility(bVisible, true);
 	}
 
 	static void EnsureWeaponLaserActorRefs(AActor* Weapon, const uint8 AttachmentLaserEnum)
@@ -1199,31 +1959,117 @@ namespace SCARWeaponAttachmentInternal
 		CallSpawnAttachments(Weapon);
 	}
 
-	static void ForceShowBodycamLaserVisuals(
-		AActor* LaserActor,
-		const bool bWantLaser,
-		const bool bWantFlash,
-		const UPrimitiveComponent* RenderTemplate,
-		const bool bSuppressBeamForMobileOverlay)
+	static FLaserEmissionFrame ResolveLaserActorEmissionFrame(AActor* LaserActor)
+	{
+		FLaserEmissionFrame Frame;
+		if (!LaserActor)
+		{
+			return Frame;
+		}
+
+		TInlineComponentArray<UStaticMeshComponent*> HousingMeshes(LaserActor);
+		for (UStaticMeshComponent* HousingMesh : HousingMeshes)
+		{
+			if (!HousingMesh || !HousingMesh->GetName().Equals(TEXT("Mesh"), ESearchCase::IgnoreCase))
+			{
+				continue;
+			}
+
+			Frame.Location = HousingMesh->GetComponentLocation();
+			Frame.Rotation = HousingMesh->GetComponentRotation();
+			const FVector Forward = HousingMesh->GetForwardVector();
+			if (const UStaticMesh* HousingAsset = HousingMesh->GetStaticMesh())
+			{
+				const FBox BoundingBox = HousingAsset->GetBoundingBox();
+				Frame.Location += Forward * FMath::Max(BoundingBox.Max.X, 0.f);
+			}
+
+			Frame.bValid = true;
+			return Frame;
+		}
+
+		if (USceneComponent* RootComponent = LaserActor->GetRootComponent())
+		{
+			Frame.Location = RootComponent->GetComponentLocation();
+			Frame.Rotation = RootComponent->GetComponentRotation();
+			Frame.bValid = true;
+		}
+
+		return Frame;
+	}
+
+	static UStaticMeshComponent* FindNamedOrContainingStaticMesh(AActor* Owner, const TCHAR* NameHint)
+	{
+		if (!Owner || !NameHint)
+		{
+			return nullptr;
+		}
+
+		TInlineComponentArray<UStaticMeshComponent*> MeshComponents(Owner);
+		for (UStaticMeshComponent* MeshComponent : MeshComponents)
+		{
+			if (MeshComponent && IsValid(MeshComponent)
+				&& MeshComponent->GetName().Contains(NameHint, ESearchCase::IgnoreCase))
+			{
+				return MeshComponent;
+			}
+		}
+
+		return nullptr;
+	}
+
+	static void ForceLongVisibleLaserBeam(AActor* LaserActor, AActor* Weapon)
+	{
+		UStaticMeshComponent* BeamComponent = FindNamedOrContainingStaticMesh(LaserActor, TEXT("LaserBeam"));
+		if (!BeamComponent)
+		{
+			return;
+		}
+
+		if (UStaticMesh* BeamMesh = GetLaserBeamMesh())
+		{
+			BeamComponent->SetStaticMesh(BeamMesh);
+		}
+
+		ConfigureBoostedLaserMaterial(BeamComponent);
+		// Critical for AR/PIE hipfire: world-space representation, not first-person-only.
+		ConfigureMobileArOverlayPrimitive(BeamComponent, true);
+
+		FLaserEmissionFrame EmissionFrame = ResolveLaserActorEmissionFrame(LaserActor);
+		if (!EmissionFrame.bValid && Weapon)
+		{
+			EmissionFrame = ResolveLaserEmissionFrame(Weapon);
+		}
+
+		float BeamDistance = 5000.f;
+		FVector HitLocation = FVector::ZeroVector;
+		if (Weapon)
+		{
+			TraceLaserBeamHitFromFrame(Weapon, EmissionFrame, HitLocation, BeamDistance);
+		}
+		BeamDistance = FMath::Clamp(BeamDistance, 1500.f, 10000.f);
+
+		ApplyArLaserBeamWorldTransform(BeamComponent, EmissionFrame, BeamDistance);
+	}
+
+	static void ForceVisibleFlashConeOnLaserActor(AActor* LaserActor, const bool bVisible)
+	{
+		(void)bVisible;
+		DestroyScarFlashConeMeshes(LaserActor);
+	}
+
+	static void HardHideBodycamLaserBeam(AActor* LaserActor)
 	{
 		if (!LaserActor)
 		{
 			return;
 		}
 
-		LaserActor->SetActorHiddenInGame(false);
-		LaserActor->SetActorTickEnabled(bWantLaser || bWantFlash);
+		SetLaserActorActiveFlag(LaserActor, false);
+		InvokeActorBoolFunction(LaserActor, FName(TEXT("ToggleLaser")), false);
 
-		if (FBoolProperty* UseIRLaserProperty = CastField<FBoolProperty>(
-				FindExactProperty(LaserActor->GetClass(), TEXT("UseIRLaser"))))
-		{
-			UseIRLaserProperty->SetPropertyValue_InContainer(LaserActor, false);
-		}
-
-		SetLaserActorActiveFlag(LaserActor, bWantLaser);
-
-		TInlineComponentArray<UPrimitiveComponent*> Primitives(LaserActor);
-		for (UPrimitiveComponent* Component : Primitives)
+		TInlineComponentArray<USceneComponent*> SceneComponents(LaserActor);
+		for (USceneComponent* Component : SceneComponents)
 		{
 			if (!Component)
 			{
@@ -1231,46 +2077,143 @@ namespace SCARWeaponAttachmentInternal
 			}
 
 			const FString Name = Component->GetName();
-			const bool bIsBeam = Name.Contains(TEXT("Beam"), ESearchCase::IgnoreCase)
+			if (Name.Contains(TEXT("Beam"), ESearchCase::IgnoreCase)
 				|| Name.Contains(TEXT("Dot"), ESearchCase::IgnoreCase)
-				|| Name.Contains(TEXT("Decal"), ESearchCase::IgnoreCase);
-			const bool bIsFlashMesh = Name.Contains(TEXT("Flash"), ESearchCase::IgnoreCase)
-				&& !Name.Contains(TEXT("Light"), ESearchCase::IgnoreCase);
-			const bool bIsLaserHousingMesh = Name.Equals(TEXT("Mesh"), ESearchCase::IgnoreCase);
-
-			if (bIsBeam)
+				|| Name.Contains(TEXT("Decal"), ESearchCase::IgnoreCase))
 			{
-				if (bSuppressBeamForMobileOverlay && bWantLaser)
+				SetSceneComponentVisible(Component, false);
+				if (UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Component))
 				{
-					Component->SetHiddenInGame(true);
-					Component->SetVisibility(false, true);
+					Mesh->SetWorldScale3D(FVector(0.001f));
 				}
-				else
-				{
-					ConfigureARAttachmentPrimitive(Component, bWantLaser, RenderTemplate);
-				}
-			}
-			else if (bIsFlashMesh)
-			{
-				ConfigureARAttachmentPrimitive(Component, bWantFlash, RenderTemplate);
-			}
-			else if (bIsLaserHousingMesh && (bWantLaser || bWantFlash))
-			{
-				ConfigureARAttachmentPrimitive(Component, true, RenderTemplate);
 			}
 		}
+	}
 
-		TInlineComponentArray<ULightComponent*> Lights(LaserActor);
-		for (ULightComponent* Light : Lights)
+	static void ForceShowBodycamLaserVisuals(
+		AActor* LaserActor,
+		AActor* Weapon,
+		const bool bWantLaser,
+		const bool bWantFlash)
+	{
+		if (!LaserActor)
 		{
-			ConfigureARAttachmentLight(Light, bWantFlash);
+			return;
+		}
+
+		const bool bShowAttachment = bWantLaser || bWantFlash;
+
+		// Only fire BP toggles / heavy mesh setup when mode changes — per-frame ProcessEvent
+		// + overlay reconfig on the laser housing was jittering FP arms with FLASH equipped.
+		static TMap<TWeakObjectPtr<AActor>, uint8> LastModeByLaserActor;
+		const uint8 ModeKey = static_cast<uint8>((bWantLaser ? 1 : 0) | (bWantFlash ? 2 : 0));
+		const uint8* LastMode = LastModeByLaserActor.Find(LaserActor);
+		const bool bModeChanged = !LastMode || *LastMode != ModeKey;
+		if (bModeChanged)
+		{
+			LastModeByLaserActor.Add(LaserActor, ModeKey);
+		}
+
+		LaserActor->SetActorHiddenInGame(!bShowAttachment);
+		LaserActor->SetActorEnableCollision(false);
+		LaserActor->SetActorTickEnabled(bWantLaser);
+
+		if (bModeChanged)
+		{
+			if (FBoolProperty* UseIRLaserProperty = CastField<FBoolProperty>(
+					FindExactProperty(LaserActor->GetClass(), TEXT("UseIRLaser"))))
+			{
+				UseIRLaserProperty->SetPropertyValue_InContainer(LaserActor, false);
+			}
+
+			SetLaserActorUseFlashlightFlag(LaserActor, bWantFlash);
+			InvokeActorBoolFunction(LaserActor, FName(TEXT("ToggleLaser")), bWantLaser);
+			InvokeActorBoolFunction(LaserActor, FName(TEXT("ToggleFlashlight")), bWantFlash);
+			SetLaserActorActiveFlag(LaserActor, bWantLaser);
+
+			TInlineComponentArray<USceneComponent*> SceneComponents(LaserActor);
+			for (USceneComponent* Component : SceneComponents)
+			{
+				if (!Component || Component->GetFName() == TEXT("SCAR_FlashCone"))
+				{
+					continue;
+				}
+
+				const FString Name = Component->GetName();
+				const bool bIsBeamOrDot = Name.Contains(TEXT("Beam"), ESearchCase::IgnoreCase)
+					|| Name.Contains(TEXT("Dot"), ESearchCase::IgnoreCase)
+					|| Name.Contains(TEXT("Decal"), ESearchCase::IgnoreCase);
+				const bool bIsHousing = Name.Equals(TEXT("Mesh"), ESearchCase::IgnoreCase);
+
+				if (bIsBeamOrDot)
+				{
+					SetSceneComponentVisible(Component, bWantLaser);
+					if (bWantLaser)
+					{
+						if (UPrimitiveComponent* Primitive = Cast<UPrimitiveComponent>(Component))
+						{
+							ConfigureMobileArOverlayPrimitive(Primitive, true);
+						}
+					}
+					else if (UStaticMeshComponent* Mesh = Cast<UStaticMeshComponent>(Component))
+					{
+						Mesh->SetWorldScale3D(FVector(0.001f));
+					}
+				}
+				else if (bIsHousing)
+				{
+					SetSceneComponentVisible(Component, bShowAttachment);
+					if (bShowAttachment)
+					{
+						if (UPrimitiveComponent* Primitive = Cast<UPrimitiveComponent>(Component))
+						{
+							ConfigureMobileArOverlayPrimitive(Primitive, true);
+						}
+					}
+				}
+			}
+
+			TInlineComponentArray<ULightComponent*> Lights(LaserActor);
+			for (ULightComponent* Light : Lights)
+			{
+				if (Cast<USpotLightComponent>(Light)
+					&& Light->GetName().Contains(TEXT("Flash"), ESearchCase::IgnoreCase))
+				{
+					ConfigureARAttachmentLight(Light, bWantFlash);
+				}
+				else if (bWantFlash && Cast<USpotLightComponent>(Light) && FindFlashlightSpotLight(LaserActor) == Light)
+				{
+					ConfigureARAttachmentLight(Light, true);
+				}
+			}
 		}
 
 		if (bWantLaser)
 		{
+			ForceLongVisibleLaserBeam(LaserActor, Weapon);
 			InvokeLaserDotTrace(LaserActor);
 			SetLaserActorActiveFlag(LaserActor, true);
-			InvokeLaserDotTrace(LaserActor);
+			ForceLongVisibleLaserBeam(LaserActor, Weapon);
+			if (bModeChanged)
+			{
+				EnsureHorrorKitFlashlightSpot(LaserActor, Weapon, false);
+			}
+		}
+		else if (bWantFlash)
+		{
+			if (bModeChanged)
+			{
+				HardHideBodycamLaserBeam(LaserActor);
+				EnsureHorrorKitFlashlightSpot(LaserActor, Weapon, true);
+			}
+		}
+		else
+		{
+			if (bModeChanged)
+			{
+				HardHideBodycamLaserBeam(LaserActor);
+				EnsureHorrorKitFlashlightSpot(LaserActor, Weapon, false);
+			}
 		}
 	}
 
@@ -1291,12 +2234,22 @@ namespace SCARWeaponAttachmentInternal
 
 	static void SyncWeaponIntegratedLaserMesh(AActor* Weapon, const uint8 AttachmentLaserEnum)
 	{
-		if (!Weapon || AttachmentLaserEnum == BodycamLaserNoneEnum)
+		if (!Weapon)
 		{
 			return;
 		}
 
+		const bool bShowHousing = AttachmentLaserEnum == BodycamLaserFlashEnum
+			|| AttachmentLaserEnum == BodycamLaserBeamEnum;
 		UStaticMesh* AttachmentMesh = GetLaserAttachmentMesh();
+
+		static TMap<TWeakObjectPtr<AActor>, uint8> LastHousingEnumByWeapon;
+		const uint8* LastHousing = LastHousingEnumByWeapon.Find(Weapon);
+		const bool bHousingChanged = !LastHousing || *LastHousing != AttachmentLaserEnum;
+		if (bHousingChanged)
+		{
+			LastHousingEnumByWeapon.Add(Weapon, AttachmentLaserEnum);
+		}
 
 		TInlineComponentArray<UStaticMeshComponent*> MeshComponents(Weapon);
 		for (UStaticMeshComponent* MeshComponent : MeshComponents)
@@ -1306,12 +2259,19 @@ namespace SCARWeaponAttachmentInternal
 				continue;
 			}
 
-			if (AttachmentMesh && MeshComponent->GetStaticMesh() != AttachmentMesh)
+			if (bShowHousing && AttachmentMesh && MeshComponent->GetStaticMesh() != AttachmentMesh)
 			{
 				MeshComponent->SetStaticMesh(AttachmentMesh);
 			}
 
-			ConfigureARAttachmentPrimitive(MeshComponent, true);
+			if (bHousingChanged)
+			{
+				ConfigureARAttachmentPrimitive(MeshComponent, bShowHousing);
+				if (bShowHousing)
+				{
+					ConfigureMobileArOverlayPrimitive(MeshComponent, true);
+				}
+			}
 		}
 	}
 
@@ -1326,36 +2286,97 @@ namespace SCARWeaponAttachmentInternal
 		const bool bWantFlash = AttachmentLaserEnum == BodycamLaserFlashEnum;
 		const bool bWantLaser = AttachmentLaserEnum == BodycamLaserBeamEnum;
 
-		USkeletalMeshComponent* ItemMesh = FindWeaponItemMesh(Weapon);
-		const UPrimitiveComponent* RenderTemplate = ItemMesh ? static_cast<UPrimitiveComponent*>(ItemMesh) : nullptr;
+		// Drive the physical iPhone LED torch with the FLASH attachment (on-device only).
+		{
+			static bool bDeviceTorchOn = false;
+			if (bWantFlash != bDeviceTorchOn)
+			{
+				SCARDeviceTorch::SetEnabled(bWantFlash);
+				bDeviceTorchOn = bWantFlash;
+				UE_LOG(
+					LogTemp,
+					Warning,
+					TEXT("SCAR device torch: %s"),
+					bWantFlash ? TEXT("ON") : TEXT("OFF"));
+			}
+		}
 
-		const bool bMobileAr = IsMobileArPassthroughWorld(Weapon->GetWorld());
-		const bool bSuppressBodycamBeam = bMobileAr && bWantLaser;
+		// Keep weapon ItemData aligned when it drifts. Do NOT rewrite the equipped slot every
+		// tick — that fought Bodycam and jittered FP arms. Slot is committed on menu close.
+		LatchLaserEnumForWeapon(Weapon, AttachmentLaserEnum);
+		if (NormalizeBodycamLaserEnum(ReadWeaponLaserEnum(Weapon)) != AttachmentLaserEnum)
+		{
+			WriteWeaponLaserEnum(Weapon, AttachmentLaserEnum);
+		}
+
+		static TMap<TWeakObjectPtr<AActor>, uint8> LastLoggedEnumByWeapon;
+		const uint8* LastLogged = LastLoggedEnumByWeapon.Find(Weapon);
+		if (!LastLogged || *LastLogged != AttachmentLaserEnum)
+		{
+			LastLoggedEnumByWeapon.Add(Weapon, AttachmentLaserEnum);
+			UE_LOG(
+				LogTemp,
+				Warning,
+				TEXT("SCAR laser/flash sync: weapon=%s enum=%u flash=%d laser=%d LaserRef=%s (w=%u slot=%u ui=%u)"),
+				*Weapon->GetName(),
+				static_cast<uint32>(AttachmentLaserEnum),
+				bWantFlash ? 1 : 0,
+				bWantLaser ? 1 : 0,
+				GetWeaponObjectRef(Weapon, TEXT("LaserRef")) ? TEXT("yes") : TEXT("no"),
+				static_cast<uint32>(NormalizeBodycamLaserEnum(ReadWeaponLaserEnum(Weapon))),
+				static_cast<uint32>(ReadLaserEnumFromEquippedSlot(Character)),
+				static_cast<uint32>(ReadLaserEnumFromModdingWidget(Character)));
+		}
 
 		if (AttachmentLaserEnum == BodycamLaserNoneEnum)
 		{
-			HideScarArOverlayComponents(Weapon);
+			DestroyAllBodycamLaserActorsForWeapon(Weapon);
+			SyncWeaponIntegratedLaserMesh(Weapon, BodycamLaserNoneEnum);
 			return;
 		}
 
 		EnsureWeaponLaserActorRefs(Weapon, AttachmentLaserEnum);
 		SyncWeaponIntegratedLaserMesh(Weapon, AttachmentLaserEnum);
 
-		if (AActor* LaserRef = GetWeaponObjectRef(Weapon, TEXT("LaserRef")))
+		AActor* LaserRef = GetWeaponObjectRef(Weapon, TEXT("LaserRef"));
+		if (!LaserRef)
 		{
-			ForceShowBodycamLaserVisuals(LaserRef, bWantLaser, bWantFlash, RenderTemplate, bSuppressBodycamBeam);
+			CallSpawnAttachments(Weapon);
+			LaserRef = GetWeaponObjectRef(Weapon, TEXT("LaserRef"));
+		}
+
+		if (LaserRef)
+		{
+			ForceShowBodycamLaserVisuals(LaserRef, Weapon, bWantLaser, bWantFlash);
 		}
 
 		if (AActor* AkimboLaserRef = GetWeaponObjectRef(Weapon, TEXT("AkimboLaserRef")))
 		{
-			ForceShowBodycamLaserVisuals(AkimboLaserRef, bWantLaser, bWantFlash, RenderTemplate, bSuppressBodycamBeam);
+			ForceShowBodycamLaserVisuals(AkimboLaserRef, Weapon, bWantLaser, bWantFlash);
 		}
 
-		if (bMobileAr)
+		USkeletalMeshComponent* ItemMesh = FindWeaponItemMesh(Weapon);
+		const UPrimitiveComponent* RenderTemplate = ItemMesh;
+
+		// Laser = AR beam overlays. Flash = SpotLight+M_Light + AR cookie overlay (like laser over passthrough).
+		if (bWantLaser)
 		{
-			EnsureArLaserBeamOnWeapon(Weapon, bWantLaser, RenderTemplate);
-			EnsureArLaserDotOnWeapon(Weapon, bWantLaser);
-			EnsureArFlashGlowOnWeapon(Weapon, bWantFlash, RenderTemplate);
+			EnsureArLaserBeamOnWeapon(Weapon, true, RenderTemplate);
+			EnsureArLaserDotOnWeapon(Weapon, true);
+			EnsureHorrorKitFlashlightSpot(LaserRef, Weapon, false);
+			EnsureArFlashCookieOverlay(Weapon, false);
+		}
+		else if (bWantFlash)
+		{
+			DestroyScarArLaserOverlays(Weapon);
+			// SpotLight is armed once in ForceShowBodycamLaserVisuals; only update the cookie here.
+			EnsureArFlashCookieOverlay(Weapon, true);
+		}
+		else
+		{
+			DestroyScarArOverlayComponents(Weapon);
+			EnsureHorrorKitFlashlightSpot(LaserRef, Weapon, false);
+			EnsureArFlashCookieOverlay(Weapon, false);
 		}
 	}
 
@@ -1678,11 +2699,51 @@ namespace SCARWeaponAttachmentInternal
 			return false;
 		}
 
+		// Commit combo selection BEFORE tearing down the widget / copying slot→weapon.
+		// Otherwise FLASH (combo label) is lost and Bodycam's wrong Laser(4) in the slot wins.
+		AActor* Weapon = Character ? GetSpawnedWeapon(Character) : nullptr;
+		uint8 ComboEnum = BodycamLaserNoneEnum;
+		const bool bHaveCombo = ReadLaserEnumFromModdingCombo(Character, ComboEnum);
+		if (bHaveCombo && Weapon)
+		{
+			LatchLaserEnumForWeapon(Weapon, ComboEnum);
+			WriteWeaponLaserEnum(Weapon, ComboEnum);
+			WriteAttachmentValue(Character, ESCARWeaponAttachmentCategory::Laser, ComboEnum);
+			UE_LOG(
+				LogTemp,
+				Warning,
+				TEXT("SCAR attachments: commit on close enum=%u (Flash=3 Laser=4 None=0)"),
+				static_cast<uint32>(ComboEnum));
+		}
+		else if (Weapon)
+		{
+			if (const uint8* Latched = LatchedLaserEnumByWeapon.Find(Weapon))
+			{
+				WriteWeaponLaserEnum(Weapon, *Latched);
+				WriteAttachmentValue(Character, ESCARWeaponAttachmentCategory::Laser, *Latched);
+			}
+		}
+
 		if (Character)
 		{
 			if (UFunction* CloseModdingFunction = Character->FindFunction(FName(TEXT("CloseModding"))))
 			{
 				Character->ProcessEvent(CloseModdingFunction, nullptr);
+			}
+
+			// Bodycam CloseModding may rewrite ItemData — re-apply committed selection.
+			if (Weapon)
+			{
+				if (bHaveCombo)
+				{
+					WriteWeaponLaserEnum(Weapon, ComboEnum);
+					WriteAttachmentValue(Character, ESCARWeaponAttachmentCategory::Laser, ComboEnum);
+				}
+				else if (const uint8* Latched = LatchedLaserEnumByWeapon.Find(Weapon))
+				{
+					WriteWeaponLaserEnum(Weapon, *Latched);
+					WriteAttachmentValue(Character, ESCARWeaponAttachmentCategory::Laser, *Latched);
+				}
 			}
 		}
 
@@ -1932,12 +2993,43 @@ bool USCARWeaponAttachmentBlueprintLibrary::CycleEquippedWeaponAttachment(
 	}
 
 	UEnum* Enum = LoadKitEnum(GetEnumPathForCategory(Category));
+	if (!Enum)
+	{
+		return false;
+	}
+
+	if (Category == ESCARWeaponAttachmentCategory::Laser)
+	{
+		CurrentValue = NormalizeBodycamLaserEnum(CurrentValue);
+	}
+
 	const int32 EnumCount = GetValidEnumCount(Enum);
-	const uint8 NextValue = static_cast<uint8>((static_cast<int32>(CurrentValue) + 1) % EnumCount);
+	if (EnumCount <= 0)
+	{
+		return false;
+	}
+
+	// ENUM_Laser is sparse (0=None, 3=Flash, 4=Laser). Cycle by index, not raw value.
+	int32 CurrentIndex = Enum->GetIndexByValue(static_cast<int64>(CurrentValue));
+	if (CurrentIndex == INDEX_NONE || CurrentIndex >= EnumCount)
+	{
+		CurrentIndex = 0;
+	}
+
+	const int32 NextIndex = (CurrentIndex + 1) % EnumCount;
+	const uint8 NextValue = static_cast<uint8>(Enum->GetValueByIndex(NextIndex));
 	if (!WriteAttachmentValue(Character, Category, NextValue))
 	{
 		return false;
 	}
+
+	UE_LOG(
+		LogTemp,
+		Log,
+		TEXT("SCAR attachments: cycle %d -> %d (%s)"),
+		static_cast<int32>(CurrentValue),
+		static_cast<int32>(NextValue),
+		*GetEnumDisplayName(Enum, NextValue).ToString());
 
 	RefreshEquippedWeaponAttachments(Pawn);
 	return true;
@@ -1956,6 +3048,14 @@ void USCARWeaponAttachmentBlueprintLibrary::RefreshEquippedWeaponAttachments(APa
 
 	FStructProperty* SlotProperty = GetEquippedSlotProperty(Character);
 	CopySlotToWeaponItemData(Character, SlotProperty);
+
+	// Preserve latched FLASH/LASER after slot copy (Bodycam often stores Laser for FLASH picks).
+	if (const uint8* Latched = LatchedLaserEnumByWeapon.Find(Weapon))
+	{
+		WriteWeaponLaserEnum(Weapon, *Latched);
+		WriteAttachmentValue(Character, ESCARWeaponAttachmentCategory::Laser, *Latched);
+	}
+
 	CallSetWeaponAmmoData(Weapon, true);
 	CallSpawnAttachments(Weapon);
 	EnsureWeaponLaserFlashEffectsDeferred(Character, Weapon);
@@ -1988,5 +3088,23 @@ void USCARWeaponAttachmentBlueprintLibrary::EnsureWeaponLaserFlashEffectsForPawn
 
 void USCARWeaponAttachmentBlueprintLibrary::EnsureWeaponLaserFlashEffects(AActor* Weapon)
 {
-	SCARWeaponAttachmentInternal::EnsureWeaponLaserFlashEffectsDeferred(nullptr, Weapon);
+	using namespace SCARWeaponAttachmentInternal;
+
+	AActor* Character = nullptr;
+	if (Weapon)
+	{
+		if (APawn* OwnerPawn = Cast<APawn>(Weapon->GetOwner()))
+		{
+			Character = ResolveBodycamCharacter(OwnerPawn);
+		}
+		if (!Character)
+		{
+			if (APawn* InstigatorPawn = Cast<APawn>(Weapon->GetInstigator()))
+			{
+				Character = ResolveBodycamCharacter(InstigatorPawn);
+			}
+		}
+	}
+
+	EnsureWeaponLaserFlashEffectsDeferred(Character, Weapon);
 }
