@@ -78,8 +78,11 @@ private:
 	};
 
 	void SampleAndSendLocalLoadout(APawn* LocalPawn);
+	void SampleAndSendLocalAnimActions(APawn* LocalPawn);
 	bool ReadLocalLoadout(APawn* LocalPawn, FLocalLoadoutSample& OutSample) const;
 	ESCARAvatarAnimAction DetectLocalAnimAction(APawn* LocalPawn);
+	bool IsLocalAnimInstancePlayingAction(APawn* LocalPawn, ESCARAvatarAnimAction Action) const;
+	int32 ReadHeldWeaponAmmo(APawn* LocalPawn) const;
 	USkeletalMeshComponent* FindHeldItemMesh(APawn* Pawn) const;
 
 	void UpdateRemoteAvatarWeapons(const APlayerController* LocalPC, const APawn* LocalPawn);
@@ -103,6 +106,11 @@ private:
 	bool bHasSentLoadout = false;
 	ESCARAvatarAnimAction LastDetectedAction = ESCARAvatarAnimAction::None;
 	float LastFireAlpha = 0.f;
+	double LastFireNotifySeconds = -1000.0;
+	double LastReloadNotifySeconds = -1000.0;
+	bool bReloadActionLatched = false;
+	int32 LastKnownAmmo = -1;
+	bool bHasKnownAmmo = false;
 
 	UPROPERTY()
 	TMap<FString, TObjectPtr<USkeletalMesh>> WeaponMeshCache;

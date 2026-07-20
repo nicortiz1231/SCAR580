@@ -6,6 +6,7 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/PlayerController.h"
 #include "SCARARMultiplayerPlayerController.h"
+#include "SCARARMultiplayerPlayerState.h"
 #include "SCARMultiplayerHealthComponent.h"
 
 USCARMultiplayerCombatComponent::USCARMultiplayerCombatComponent()
@@ -28,6 +29,18 @@ FSCARMultiplayerHitResult USCARMultiplayerCombatComponent::ProcessWeaponShot(
 		return FSCARMultiplayerHitResult();
 	}
 
+	if (APawn* OwnerPawn = Cast<APawn>(GetOwner()))
+	{
+		if (OwnerPawn->IsLocallyControlled())
+		{
+			if (ASCARARMultiplayerPlayerState* LoadoutState =
+					OwnerPawn->GetPlayerState<ASCARARMultiplayerPlayerState>())
+			{
+				LoadoutState->Server_NotifyAvatarAnimAction(1); // Fire
+			}
+		}
+	}
+
 	return TraceForOpponent(BaseDamage, CriticalMultiplier);
 }
 
@@ -41,6 +54,13 @@ FSCARMultiplayerHitResult USCARMultiplayerCombatComponent::ProcessWeaponHitScan(
 	if (!OwnerPawn || !OwnerPawn->IsLocallyControlled())
 	{
 		return FSCARMultiplayerHitResult();
+	}
+
+	// Every multiplayer shot should show fire on remote avatars.
+	if (ASCARARMultiplayerPlayerState* LoadoutState =
+			OwnerPawn->GetPlayerState<ASCARARMultiplayerPlayerState>())
+	{
+		LoadoutState->Server_NotifyAvatarAnimAction(1); // Fire
 	}
 
 	if (bPhysicsBlockingHit)

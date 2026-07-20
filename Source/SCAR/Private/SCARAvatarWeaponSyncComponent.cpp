@@ -1,6 +1,7 @@
 #include "SCARAvatarWeaponSyncComponent.h"
 
 #include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
 #include "Animation/AnimSequenceBase.h"
 #include "Animation/AnimationAsset.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -236,11 +237,19 @@ namespace
 			}
 			if (bSniper)
 			{
-				return TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Sniper/Anim_Arms_Sniper_Fire.Anim_Arms_Sniper_Fire");
+				return TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Sniper/Anim_Arms_Sniper_FireShort.Anim_Arms_Sniper_FireShort");
 			}
 			return TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Pistol/Anim_Arms_Pistol_Fire.Anim_Arms_Pistol_Fire");
 
 		case ESCARAvatarAnimAction::ReloadEmpty:
+			if (bRifle)
+			{
+				return TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Rifle/Anim_Arms_AmericanRifle_ReloadEmpty.Anim_Arms_AmericanRifle_ReloadEmpty");
+			}
+			if (bSniper)
+			{
+				return TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Sniper/Anim_Arms_Sniper_Reload_Empty.Anim_Arms_Sniper_Reload_Empty");
+			}
 			if (bPistol || (!bRifle && !bShotgun && !bSniper))
 			{
 				return TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Pistol/Anim_Arms_Pistol_ReloadEmpty.Anim_Arms_Pistol_ReloadEmpty");
@@ -253,7 +262,7 @@ namespace
 			}
 			if (bShotgun)
 			{
-				return TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Shotgun/Anim_Arms_Shotgun_Reload.Anim_Arms_Shotgun_Reload");
+				return TEXT("/Game/BodycamFPSKIT/Character/Animations/WeaponAnims/Shotgun/Anim_Arms_Shotgun_ReloadBegin.Anim_Arms_Shotgun_ReloadBegin");
 			}
 			if (bSniper)
 			{
@@ -332,6 +341,10 @@ void USCARAvatarWeaponSyncComponent::TickComponent(
 		SampleAndSendLocalLoadout(LocalPawn);
 	}
 
+	// Fire / reload must be sampled every tick — a 10Hz loadout poll misses short
+	// CrosshairFireAlpha spikes and HandsSlot montages.
+	SampleAndSendLocalAnimActions(LocalPawn);
+
 	UpdateRemoteAvatarWeapons(LocalPC, LocalPawn);
 }
 
@@ -349,8 +362,6 @@ void USCARAvatarWeaponSyncComponent::SampleAndSendLocalLoadout(APawn* LocalPawn)
 	{
 		return;
 	}
-
-	Sample.Action = DetectLocalAnimAction(LocalPawn);
 
 	const bool bLoadoutChanged =
 		!bHasSentLoadout ||
@@ -370,16 +381,49 @@ void USCARAvatarWeaponSyncComponent::SampleAndSendLocalLoadout(APawn* LocalPawn)
 			Sample.AttachSocket,
 			Sample.RelativeLocation,
 			Sample.RelativeRotation);
+		LastSentSample = Sample;
+		bHasSentLoadout = true;
 	}
+}
 
-	if (Sample.Action != ESCARAvatarAnimAction::None && Sample.Action != LastDetectedAction)
+void USCARAvatarWeaponSyncComponent::SampleAndSendLocalAnimActions(APawn* LocalPawn)
+{
+	ASCARARMultiplayerPlayerState* LoadoutState =
+		LocalPawn->GetPlayerState<ASCARARMultiplayerPlayerState>();
+	if (!LoadoutState)
 	{
-		LoadoutState->Server_NotifyAvatarAnimAction(static_cast<uint8>(Sample.Action));
+		return;
 	}
 
-	LastDetectedAction = Sample.Action;
-	LastSentSample = Sample;
-	bHasSentLoadout = true;
+	const ESCARAvatarAnimAction Action = DetectLocalAnimAction(LocalPawn);
+	const UWorld* World = GetWorld();
+	const double Now = World ? World->GetTimeSeconds() : 0.0;
+
+	if (Action == ESCARAvatarAnimAction::Fire)
+	{
+		if (Now - LastFireNotifySeconds >= 0.07)
+		{
+			LastFireNotifySeconds = Now;
+			LoadoutState->Server_NotifyAvatarAnimAction(static_cast<uint8>(Action));
+		}
+	}
+	else if (
+		Action == ESCARAvatarAnimAction::Reload ||
+		Action == ESCARAvatarAnimAction::ReloadEmpty)
+	{
+		if (!bReloadActionLatched && Now - LastReloadNotifySeconds >= 0.2)
+		{
+			bReloadActionLatched = true;
+			LastReloadNotifySeconds = Now;
+			LoadoutState->Server_NotifyAvatarAnimAction(static_cast<uint8>(Action));
+		}
+	}
+	else
+	{
+		bReloadActionLatched = false;
+	}
+
+	LastDetectedAction = Action;
 }
 
 bool USCARAvatarWeaponSyncComponent::ReadLocalLoadout(
@@ -423,20 +467,24 @@ ESCARAvatarAnimAction USCARAvatarWeaponSyncComponent::DetectLocalAnimAction(APaw
 		return ESCARAvatarAnimAction::None;
 	}
 
-	bool bReloading = false;
-	if (GetBoolProperty(LocalPawn, TEXT("IsReloading"), bReloading) && bReloading)
+	// Prefer FP arm / weapon montages — the kit plays Fire/Reload there.
+	if (IsLocalAnimInstancePlayingAction(LocalPawn, ESCARAvatarAnimAction::ReloadEmpty))
+	{
+		return ESCARAvatarAnimAction::ReloadEmpty;
+	}
+	if (IsLocalAnimInstancePlayingAction(LocalPawn, ESCARAvatarAnimAction::Reload))
 	{
 		return ESCARAvatarAnimAction::Reload;
 	}
-	if (GetBoolProperty(LocalPawn, TEXT("Reloading"), bReloading) && bReloading)
+	if (IsLocalAnimInstancePlayingAction(LocalPawn, ESCARAvatarAnimAction::Fire))
 	{
-		return ESCARAvatarAnimAction::Reload;
+		return ESCARAvatarAnimAction::Fire;
 	}
 
 	float FireAlpha = 0.f;
 	if (GetFloatProperty(LocalPawn, TEXT("CrosshairFireAlpha"), FireAlpha))
 	{
-		const bool bRisingEdge = FireAlpha > 0.15f && LastFireAlpha <= 0.15f;
+		const bool bRisingEdge = FireAlpha > 0.08f && LastFireAlpha <= 0.08f;
 		LastFireAlpha = FireAlpha;
 		if (bRisingEdge)
 		{
@@ -444,13 +492,188 @@ ESCARAvatarAnimAction USCARAvatarWeaponSyncComponent::DetectLocalAnimAction(APaw
 		}
 	}
 
-	bool bFiring = false;
-	if (GetBoolProperty(LocalPawn, TEXT("IsFiring"), bFiring) && bFiring)
+	const int32 Ammo = ReadHeldWeaponAmmo(LocalPawn);
+	if (Ammo >= 0)
 	{
-		return ESCARAvatarAnimAction::Fire;
+		if (bHasKnownAmmo)
+		{
+			if (Ammo < LastKnownAmmo)
+			{
+				LastKnownAmmo = Ammo;
+				return ESCARAvatarAnimAction::Fire;
+			}
+			if (Ammo > LastKnownAmmo)
+			{
+				LastKnownAmmo = Ammo;
+				return ESCARAvatarAnimAction::Reload;
+			}
+		}
+		LastKnownAmmo = Ammo;
+		bHasKnownAmmo = true;
 	}
 
 	return ESCARAvatarAnimAction::None;
+}
+
+bool USCARAvatarWeaponSyncComponent::IsLocalAnimInstancePlayingAction(
+	APawn* LocalPawn,
+	const ESCARAvatarAnimAction Action) const
+{
+	if (!LocalPawn)
+	{
+		return false;
+	}
+
+	FString WeaponPath;
+	if (const USkeletalMeshComponent* ItemMesh = FindHeldItemMesh(LocalPawn))
+	{
+		if (const USkeletalMesh* MeshAsset = ItemMesh->GetSkeletalMeshAsset())
+		{
+			WeaponPath = MeshAsset->GetPathName();
+		}
+	}
+
+	UAnimSequenceBase* ActionAnim = const_cast<USCARAvatarWeaponSyncComponent*>(this)
+										->ResolveActionAnimation(WeaponPath, Action);
+	if (!ActionAnim)
+	{
+		return false;
+	}
+
+	static const FName SlotNames[] = {
+		FName(TEXT("DefaultSlot")),
+		FName(TEXT("UpperBody")),
+		FName(TEXT("Hands")),
+		FName(TEXT("Weapon")),
+		FName(TEXT("FullBody")),
+	};
+
+	TArray<UAnimInstance*> AnimInstances;
+
+	if (UAnimInstance* Hands = Cast<UAnimInstance>(GetObjectProperty(LocalPawn, TEXT("HandsSlot"))))
+	{
+		AnimInstances.Add(Hands);
+	}
+	if (UAnimInstance* AnimBP = Cast<UAnimInstance>(GetObjectProperty(LocalPawn, TEXT("AnimBP"))))
+	{
+		AnimInstances.Add(AnimBP);
+	}
+
+	TArray<USkeletalMeshComponent*> Meshes;
+	LocalPawn->GetComponents<USkeletalMeshComponent>(Meshes);
+	for (USkeletalMeshComponent* Mesh : Meshes)
+	{
+		if (Mesh && Mesh->GetAnimInstance())
+		{
+			AnimInstances.AddUnique(Mesh->GetAnimInstance());
+		}
+	}
+
+	if (const USkeletalMeshComponent* ItemMesh = FindHeldItemMesh(LocalPawn))
+	{
+		if (UAnimInstance* ItemAnim = ItemMesh->GetAnimInstance())
+		{
+			AnimInstances.AddUnique(ItemAnim);
+		}
+	}
+
+	for (UAnimInstance* AnimInstance : AnimInstances)
+	{
+		if (!AnimInstance)
+		{
+			continue;
+		}
+
+		if (const UAnimMontage* Montage = AnimInstance->GetCurrentActiveMontage())
+		{
+			const FString MontageName = Montage->GetName();
+			if (Action == ESCARAvatarAnimAction::Fire && MontageName.Contains(TEXT("Fire")))
+			{
+				return true;
+			}
+			if ((Action == ESCARAvatarAnimAction::Reload || Action == ESCARAvatarAnimAction::ReloadEmpty) &&
+				MontageName.Contains(TEXT("Reload")))
+			{
+				return true;
+			}
+		}
+
+		for (const FName SlotName : SlotNames)
+		{
+			if (AnimInstance->IsPlayingSlotAnimation(ActionAnim, SlotName))
+			{
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
+int32 USCARAvatarWeaponSyncComponent::ReadHeldWeaponAmmo(APawn* LocalPawn) const
+{
+	AActor* WeaponActor = nullptr;
+	for (const FName PropertyName : {FName(TEXT("SpawnedItemRef")), FName(TEXT("SpawnedItem"))})
+	{
+		WeaponActor = Cast<AActor>(GetObjectProperty(LocalPawn, PropertyName));
+		if (WeaponActor)
+		{
+			break;
+		}
+	}
+
+	if (!WeaponActor)
+	{
+		return -1;
+	}
+
+	static const TCHAR* AmmoHints[] = {
+		TEXT("Ammo"),
+		TEXT("CurrentAmmo"),
+		TEXT("MagazineAmmo"),
+		TEXT("ClipAmmo"),
+		TEXT("Bullets"),
+		TEXT("Rounds"),
+	};
+
+	for (TFieldIterator<FProperty> It(WeaponActor->GetClass()); It; ++It)
+	{
+		FProperty* Property = *It;
+		if (!Property)
+		{
+			continue;
+		}
+
+		const FString Name = Property->GetName();
+		bool bMatch = false;
+		for (const TCHAR* Hint : AmmoHints)
+		{
+			if (Name.Contains(Hint))
+			{
+				bMatch = true;
+				break;
+			}
+		}
+		if (!bMatch || Name.Contains(TEXT("Max")) || Name.Contains(TEXT("Reserve")))
+		{
+			continue;
+		}
+
+		if (const FIntProperty* IntProperty = CastField<FIntProperty>(Property))
+		{
+			return IntProperty->GetPropertyValue_InContainer(WeaponActor);
+		}
+		if (const FByteProperty* ByteProperty = CastField<FByteProperty>(Property))
+		{
+			return static_cast<int32>(ByteProperty->GetPropertyValue_InContainer(WeaponActor));
+		}
+		if (const FFloatProperty* FloatProperty = CastField<FFloatProperty>(Property))
+		{
+			return FMath::RoundToInt(FloatProperty->GetPropertyValue_InContainer(WeaponActor));
+		}
+	}
+
+	return -1;
 }
 
 USkeletalMeshComponent* USCARAvatarWeaponSyncComponent::FindHeldItemMesh(APawn* Pawn) const
@@ -760,31 +983,10 @@ void USCARAvatarWeaponSyncComponent::ApplyAvatarAction(
 		return;
 	}
 
-	UAnimInstance* AnimInstance = BodyMesh ? BodyMesh->GetAnimInstance() : nullptr;
-	UAnimSequenceBase* ActionAnim = ResolveActionAnimation(WeaponMeshPath, Action);
-	if (!AnimInstance || !ActionAnim)
-	{
-		return;
-	}
-
-	AnimInstance->StopSlotAnimation(0.05f, UpperBodySlotName);
-	AnimInstance->PlaySlotAnimationAsDynamicMontage(
-		ActionAnim,
-		UpperBodySlotName,
-		0.05f,
-		0.15f,
-		1.f,
-		1);
-
+	// Fire/reload visuals (weapon mesh anim + muzzle FX) are played by
+	// ASCARARMultiplayerPlayerState::Multicast_PlayAvatarAnimAction.
+	// Do NOT play Anim_Arms_* Fire on UpperBody — that contorts Manny's hold.
 	LastPlayedActionSerial.Add(Pawn, Serial);
-
-	UE_LOG(
-		LogSCARAvatarWeapon,
-		Log,
-		TEXT("Remote %s: avatar action %d '%s'"),
-		*Pawn->GetName(),
-		static_cast<int32>(Action),
-		*ActionAnim->GetName());
 }
 
 void USCARAvatarWeaponSyncComponent::DestroyLeftoverAdsDrivers(APawn* Pawn)
