@@ -39,6 +39,7 @@ USCARMultiplayerPresentationComponent::USCARMultiplayerPresentationComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.TickGroup = TG_PostUpdateWork;
+	bPlaceOpponentInView = false;
 	OpponentMannequinMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(SCARMultiplayerPresentation::MannequinMeshPath));
 	OpponentFpArmsMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(SCARMultiplayerPresentation::FpArmsMeshPath));
 	OpponentFallbackPistolMesh = TSoftObjectPtr<USkeletalMesh>(FSoftObjectPath(SCARMultiplayerPresentation::PistolMeshPath));
@@ -64,6 +65,9 @@ bool USCARMultiplayerPresentationComponent::IsUsingViewPlacementForLocalViewer()
 void USCARMultiplayerPresentationComponent::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// Blueprint CDOs may still force pin-in-view; walking requires pose-driven placement.
+	bPlaceOpponentInView = false;
 
 	if (AActor* OwnerActor = GetOwner())
 	{
@@ -123,6 +127,9 @@ void USCARMultiplayerPresentationComponent::TickComponent(
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+	// Never pin opponent to camera — breaks world-locked AR placement.
+	bPlaceOpponentInView = false;
+
 	const bool bMultiplayer = ASCARARMultiplayerPlayerController::IsMultiplayerSession(GetWorld());
 	if (!bMultiplayer && !bCachedIsOpponentView)
 	{
@@ -138,7 +145,7 @@ void USCARMultiplayerPresentationComponent::TickComponent(
 		RefreshPresentation();
 	}
 
-	if (bCachedIsOpponentView)
+	if (bCachedIsOpponentView && bPlaceOpponentInView)
 	{
 		UpdateOpponentViewPlacement();
 	}
@@ -455,6 +462,20 @@ void USCARMultiplayerPresentationComponent::ConfigureMirroredMannequin(USkeletal
 	MannequinMesh->SetGenerateOverlapEvents(false);
 	MannequinMesh->SetCastShadow(true);
 	SetComponentWorldVisible(MannequinMesh);
+
+	if (ACharacter* Character = Cast<ACharacter>(MannequinMesh->GetOwner()))
+	{
+		if (const UCapsuleComponent* Capsule = Character->GetCapsuleComponent())
+		{
+			const float DesiredMeshZ = -Capsule->GetScaledCapsuleHalfHeight();
+			const FVector RelativeLocation = MannequinMesh->GetRelativeLocation();
+			if (!FMath::IsNearlyEqual(RelativeLocation.Z, DesiredMeshZ, 1.f))
+			{
+				MannequinMesh->SetRelativeLocation(FVector(RelativeLocation.X, RelativeLocation.Y, DesiredMeshZ));
+			}
+		}
+	}
+
 	MannequinMesh->MarkRenderStateDirty();
 }
 

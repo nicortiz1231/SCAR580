@@ -4,6 +4,8 @@
 #include "Components/ActorComponent.h"
 #include "SCARARPoseSyncComponent.generated.h"
 
+class ASCARSharedARGround;
+
 /** Samples ARKit camera pose on the owning device and replicates it for opponent placement. */
 UCLASS(ClassGroup = (SCAR), meta = (BlueprintSpawnableComponent))
 class SCAR_API USCARARPoseSyncComponent : public UActorComponent
@@ -29,16 +31,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|AR Pose", meta = (ClampMin = "0.0", ClampMax = "89.0"))
 	float MaxMultiplayerBodyPitchDegrees = 75.f;
 
-	/**
-	 * Replicated aim includes clamped pitch for look. Actor/capsule placement uses
-	 * yaw only; SetRemoteViewPitch drives ABP_Manny spine/head look up/down.
-	 */
+	/** Spawn a visible virtual floor when the local AR session origin is first captured. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|AR Pose")
+	bool bSpawnSharedGround = true;
 
 	UPROPERTY(BlueprintReadOnly, ReplicatedUsing = OnRep_ReplicatedARPose, Category = "SCAR|AR Pose")
 	FTransform ReplicatedARPose = FTransform::Identity;
 
 	UFUNCTION(BlueprintPure, Category = "SCAR|AR Pose")
 	bool HasValidARPose() const { return bHasValidARPose; }
+
+	UFUNCTION(BlueprintPure, Category = "SCAR|AR Pose")
+	bool HasLocalSessionOrigin() const { return bHasLocalSessionOrigin; }
 
 	UFUNCTION(BlueprintPure, Category = "SCAR|AR Pose")
 	FTransform GetCurrentARPose() const;
@@ -60,18 +64,28 @@ protected:
 private:
 	bool SampleARPose(FTransform& OutPose) const;
 	void CaptureSessionOriginIfNeeded(const FTransform& CurrentPose);
+	void SpawnSharedGroundIfNeeded(const FTransform& BodyPose);
 	FTransform ComputeWorldPoseFromSessionRelative(const FTransform& RelativePose) const;
+	FVector SnapLocationToSharedGround(const FVector& Location) const;
+	float GetOwnerCapsuleHalfHeight() const;
 	void ApplyPoseToOwner(const FTransform& Pose, bool bTeleport);
 	void UpdateProxyInterpolation(float DeltaTime);
 	void UpdateRemoteProxyPose(float DeltaTime);
 	void SyncRemoteVisualizationRotation(APawn* Pawn);
+	void SyncRemoteLocomotionVelocity(APawn* Pawn, float DeltaTime);
+	void EnsureWalkingMovement(APawn* Pawn);
 	FTransform BuildMultiplayerBodyPose(const FTransform& DeviceWorldPose) const;
 	FRotator SanitizeMultiplayerBodyRotation(const FRotator& DeviceRotation) const;
+	static bool IsARSessionActive();
+	static FRotator MakeUprightYawRotation(const FRotator& Rotation);
+	FTransform MakeWorldPoseForReplication(const FTransform& BodyPose, bool bDesktopWorldPose) const;
 
 	bool bHasValidARPose = false;
 	bool bHasLocalSessionOrigin = false;
 	bool bHasSnappedRemotePose = false;
 	double LastPoseSendSeconds = 0.0;
+	FVector LastRemoteLocationForVelocity = FVector::ZeroVector;
 	FTransform LocalSessionOrigin = FTransform::Identity;
 	FTransform ProxyTargetPose = FTransform::Identity;
+	TWeakObjectPtr<ASCARSharedARGround> SpawnedSharedGround;
 };

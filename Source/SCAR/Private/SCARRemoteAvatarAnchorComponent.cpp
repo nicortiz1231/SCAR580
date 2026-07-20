@@ -13,8 +13,7 @@
 USCARRemoteAvatarAnchorComponent::USCARRemoteAvatarAnchorComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
-	// After replication, character movement, and gameplay have settled the
-	// pawn transform for this frame.
+	// After pose sync has written the pawn transform for this frame.
 	PrimaryComponentTick.TickGroup = TG_LastDemotable;
 }
 
@@ -65,9 +64,9 @@ void USCARRemoteAvatarAnchorComponent::TickComponent(
 	UHeadMountedDisplayFunctionLibrary::GetOrientationAndPosition(DeviceRotation, DevicePosition);
 	const float DeviceRollDegrees = FRotator::NormalizeAxis(DeviceRotation.Roll);
 
-	FVector ViewLocation;
+	FVector DummyViewLocation;
 	FRotator ViewRotation;
-	LocalPC->GetPlayerViewPoint(ViewLocation, ViewRotation);
+	LocalPC->GetPlayerViewPoint(DummyViewLocation, ViewRotation);
 	ViewRotation.Roll = 0.f;
 
 	const FQuat CameraQuat = ViewRotation.Quaternion();
@@ -75,9 +74,6 @@ void USCARRemoteAvatarAnchorComponent::TickComponent(
 		CameraQuat * FRotator(0.f, 0.f, -DeviceRollDegrees).Quaternion() * CameraQuat.Inverse();
 
 	const APawn* LocalPawn = LocalPC->GetPawn();
-
-	// During the join window our own pawn exists but is not possessed yet and
-	// would look "remote"; never touch any pawn until possession completes.
 	if (!LocalPawn)
 	{
 		return;
@@ -104,8 +100,6 @@ void USCARRemoteAvatarAnchorComponent::TickComponent(
 			continue;
 		}
 
-		// Extra identity check: never treat a pawn owned by the local player
-		// state as remote (covers possession races during join).
 		if (LocalPC->PlayerState && Pawn->GetPlayerState() == LocalPC->PlayerState)
 		{
 			continue;
@@ -132,13 +126,10 @@ void USCARRemoteAvatarAnchorComponent::TickComponent(
 			continue;
 		}
 
-		// Stateless: desired mesh world pose is derived from the replicated
-		// pawn transform every frame; nothing we wrote last frame is read.
-		FTransform PawnWorld = Pawn->GetActorTransform();
+		// Re-attach each frame so last frame's world-space write doesn't accumulate drift.
+		Mesh->SetRelativeTransform(State->DefaultRelative);
 
-		// Prefer the replicated AR body yaw. Look pitch must stay on
-		// RemoteViewPitch / ABP_Manny — tipping the whole mesh here made the
-		// avatar rotate as a rigid stick and killed organic look.
+		FTransform PawnWorld = Pawn->GetActorTransform();
 		if (const USCARARPoseSyncComponent* PoseSync =
 				Pawn->FindComponentByClass<USCARARPoseSyncComponent>())
 		{
@@ -150,12 +141,10 @@ void USCARRemoteAvatarAnchorComponent::TickComponent(
 		}
 
 		const FTransform MeshWorld = State->DefaultRelative * PawnWorld;
-
-		const FVector AnchoredLocation =
-			ViewLocation + CounterRollWorld.RotateVector(MeshWorld.GetLocation() - ViewLocation);
 		const FQuat AnchoredRotation = (CounterRollWorld * MeshWorld.GetRotation()).GetNormalized();
 
-		Mesh->SetWorldLocationAndRotation(AnchoredLocation, AnchoredRotation, false, nullptr, ETeleportType::TeleportPhysics);
+		// Position stays on the grounded pawn. Only rotation gets counter-roll.
+		Mesh->SetWorldRotation(AnchoredRotation, false, nullptr, ETeleportType::TeleportPhysics);
 	}
 }
 

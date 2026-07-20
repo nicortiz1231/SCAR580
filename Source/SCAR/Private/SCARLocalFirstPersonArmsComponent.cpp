@@ -1,12 +1,17 @@
 #include "SCARLocalFirstPersonArmsComponent.h"
 
 #include "ARBlueprintLibrary.h"
+#include "Animation/AnimInstance.h"
 #include "Camera/CameraComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Engine/Engine.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/Pawn.h"
+#include "SCARMultiplayerPawnSetup.h"
 #include "UObject/UnrealType.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSCARLocalArms, Log, All);
@@ -83,7 +88,14 @@ void USCARLocalFirstPersonArmsComponent::ConfigureLocalView(APawn* Pawn)
 	ConfigureSpringArmForAR();
 	DisableCameraLookSwayForAR(Pawn);
 	EnsureFirstPersonMeshOnCamera(Pawn);
-	ConfigureMultiplayerBodyMesh(Pawn);
+	if (IsARRunning())
+	{
+		ConfigureMultiplayerBodyMesh(Pawn);
+	}
+	else
+	{
+		ConfigureEditorDesktopBodyMesh(Pawn);
+	}
 }
 
 void USCARLocalFirstPersonArmsComponent::ConfigureSpringArmForAR()
@@ -197,6 +209,67 @@ void USCARLocalFirstPersonArmsComponent::ConfigureMultiplayerBodyMesh(APawn* Paw
 	CachedThirdPersonMesh->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::WorldSpaceRepresentation);
 }
 
+void USCARLocalFirstPersonArmsComponent::ConfigureEditorDesktopBodyMesh(APawn* Pawn)
+{
+	if (IsARRunning() || !Pawn || !CachedThirdPersonMesh)
+	{
+		return;
+	}
+
+	ACharacter* Character = Cast<ACharacter>(Pawn);
+	UCapsuleComponent* Capsule = Character ? Character->GetCapsuleComponent() : nullptr;
+	if (!Capsule)
+	{
+		return;
+	}
+
+	SCARMultiplayerPawnSetup::EnsureMultiplayerFloor(Pawn->GetWorld());
+
+	if (CachedThirdPersonMesh->GetAttachParent() != Capsule)
+	{
+		CachedThirdPersonMesh->AttachToComponent(
+			Capsule,
+			FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+	}
+
+	const float MeshZ = -Capsule->GetScaledCapsuleHalfHeight();
+	CachedThirdPersonMesh->SetRelativeLocation(FVector(0.f, 0.f, MeshZ));
+	CachedThirdPersonMesh->SetRelativeRotation(FRotator::ZeroRotator);
+	CachedThirdPersonMesh->SetRelativeScale3D(FVector::OneVector);
+
+	static const TCHAR* MannyAnimBP =
+		TEXT("/Game/BodycamFPSKIT/Demo/Character/Mannequins/Animations/ABP_Manny.ABP_Manny_C");
+	if (TSubclassOf<UAnimInstance> MannyClass = LoadClass<UAnimInstance>(nullptr, MannyAnimBP))
+	{
+		if (CachedThirdPersonMesh->GetAnimClass() != MannyClass)
+		{
+			CachedThirdPersonMesh->SetAnimInstanceClass(MannyClass);
+		}
+	}
+
+	CachedThirdPersonMesh->SetHiddenInGame(false);
+	CachedThirdPersonMesh->SetVisibility(true, true);
+	CachedThirdPersonMesh->SetOwnerNoSee(false);
+	CachedThirdPersonMesh->SetOnlyOwnerSee(false);
+	CachedThirdPersonMesh->SetCastHiddenShadow(false);
+	CachedThirdPersonMesh->SetComponentTickEnabled(true);
+	CachedThirdPersonMesh->bPauseAnims = false;
+
+	if (Character)
+	{
+		if (UCharacterMovementComponent* Movement = Character->GetCharacterMovement())
+		{
+			Movement->GravityScale = 1.f;
+			Movement->SetMovementMode(MOVE_Walking);
+			Movement->MaxWalkSpeed = FMath::Max(Movement->MaxWalkSpeed, 300.f);
+		}
+
+		SCARMultiplayerPawnSetup::SnapPawnToGround(Pawn);
+	}
+
+	bEditorDesktopBodyConfigured = true;
+}
+
 void USCARLocalFirstPersonArmsComponent::TickComponent(
 	const float DeltaTime,
 	const ELevelTick TickType,
@@ -235,6 +308,19 @@ void USCARLocalFirstPersonArmsComponent::TickComponent(
 
 	EnsureFirstPersonMeshOnCamera(Pawn);
 	LockFirstPersonMeshToCamera();
+
+	if (!IsARRunning() && bEditorDesktopBodyConfigured && CachedThirdPersonMesh)
+	{
+		if (ACharacter* Character = Cast<ACharacter>(Pawn))
+		{
+			if (UCapsuleComponent* Capsule = Character->GetCapsuleComponent())
+			{
+				const float MeshZ = -Capsule->GetScaledCapsuleHalfHeight();
+				CachedThirdPersonMesh->SetRelativeLocation(FVector(0.f, 0.f, MeshZ));
+				CachedThirdPersonMesh->SetRelativeRotation(FRotator::ZeroRotator);
+			}
+		}
+	}
 }
 
 UCameraComponent* USCARLocalFirstPersonArmsComponent::FindFirstPersonCamera(const APawn* Pawn) const

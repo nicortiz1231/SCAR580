@@ -21,12 +21,9 @@ class USkeletalMeshComponent;
  * stay anchored to the real world seen in the AR passthrough -- like a real
  * subject filmed by a rolling camera.
  *
- * The counter-roll is applied to the avatar's visible BODY MESH component,
- * never to the pawn actor itself. The pawn transform stays fully owned by
- * replication / character movement, so there is no state to re-base and no
- * feedback loop to fight: every frame the desired mesh world transform is
- * recomputed statelessly from (replicated pawn transform) x (the mesh's
- * default relative transform) x (counter-roll about the camera axis).
+ * Position stays on the replicated pawn transform (feet grounded by pose sync).
+ * Only rotation receives counter-roll; re-projecting mesh position around the
+ * camera caused avatars to float when the viewer pitched/yawed to look around.
  */
 UCLASS(ClassGroup = (SCAR))
 class SCAR_API USCARRemoteAvatarAnchorComponent : public UActorComponent

@@ -7,6 +7,7 @@
 class UCameraComponent;
 class USkeletalMeshComponent;
 class USpringArmComponent;
+class APawn;
 
 /**
  * Local AR FPS view: camera-locked arms visible only to the owning player,
@@ -58,6 +59,7 @@ private:
 	void EnsureFirstPersonMeshOnCamera(APawn* Pawn);
 	void LockFirstPersonMeshToCamera();
 	void ConfigureMultiplayerBodyMesh(APawn* Pawn);
+	void ConfigureEditorDesktopBodyMesh(APawn* Pawn);
 	void ConfigureSpringArmForAR();
 	void DisableCameraLookSwayForAR(APawn* Pawn);
 	bool IsARRunning() const;
@@ -84,4 +86,5 @@ private:
 	bool bLocalViewConfigured = false;
 	bool bSpringArmConfiguredForAR = false;
 	bool bCameraLookSwayDisabled = false;
+	bool bEditorDesktopBodyConfigured = false;
 };

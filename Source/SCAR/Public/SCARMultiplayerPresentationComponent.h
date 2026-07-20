@@ -52,7 +52,7 @@ public:
 	FName OpponentPoseDriverComponentName = TEXT("SCAR_OpponentPoseDriver");
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Multiplayer|Presentation")
-	bool bPlaceOpponentInView = true;
+	bool bPlaceOpponentInView = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|Multiplayer|Presentation", meta = (ClampMin = "50.0"))
 	float OpponentViewDistanceCm = 260.f;

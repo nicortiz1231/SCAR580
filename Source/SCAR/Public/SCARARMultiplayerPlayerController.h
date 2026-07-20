@@ -53,6 +53,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void OnPossess(APawn* InPawn) override;
 	virtual void PlayerTick(float DeltaTime) override;
 
 private:
@@ -72,6 +73,14 @@ private:
 	// Attaches USCARAvatarWeaponSyncComponent to this controller so remote
 	// avatars visibly hold the weapon their player actually has equipped.
 	void EnsureAvatarWeaponSync();
+
+	/** Upgrade PoseTracking AR session to World tracking so walking translates XYZ. iOS only. */
+	void EnsureWorldTrackingARSession();
+	void ScheduleWorldTrackingCheck();
+
+	bool bWorldTrackingReady = false;
+	int32 WorldTrackingAttempts = 0;
+	FTimerHandle WorldTrackingTimer;
 
 	// FirstPersonCamera drives its rotation via bUsePawnControlRotation (reads
 	// ControlRotation), while its bLockToHmd flag independently overrides the

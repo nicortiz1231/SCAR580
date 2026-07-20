@@ -1,16 +1,20 @@
 #include "SCARARMultiplayerGameMode.h"
 
 #include "Engine/Engine.h"
+#include "GameFramework/Controller.h"
+#include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerStart.h"
 #include "Kismet/GameplayStatics.h"
 #include "SCARARMultiplayerPlayerController.h"
 #include "SCARARMultiplayerPlayerState.h"
+#include "SCARMultiplayerPawnSetup.h"
 
 ASCARARMultiplayerGameMode::ASCARARMultiplayerGameMode()
 {
 	bUseSeamlessTravel = false;
 	PlayerStateClass = ASCARARMultiplayerPlayerState::StaticClass();
+	PlayerControllerClass = ASCARARMultiplayerPlayerController::StaticClass();
 }
 
 void ASCARARMultiplayerGameMode::InitGame(
@@ -28,7 +32,23 @@ void ASCARARMultiplayerGameMode::InitGame(
 			-1,
 			20.f,
 			FColor::Cyan,
-			TEXT("SCAR-580 MULTIPLAYER MODE ACTIVE"));
+			TEXT("SCAR-580 MULTIPLAYER MODE ACTIVE (ground+walk build)"));
+	}
+}
+
+void ASCARARMultiplayerGameMode::StartPlay()
+{
+	Super::StartPlay();
+	SCARMultiplayerPawnSetup::EnsureMultiplayerFloor(GetWorld());
+}
+
+void ASCARARMultiplayerGameMode::GenericPlayerInitialization(AController* NewPlayer)
+{
+	Super::GenericPlayerInitialization(NewPlayer);
+
+	if (APawn* Pawn = NewPlayer ? NewPlayer->GetPawn() : nullptr)
+	{
+		SCARMultiplayerPawnSetup::EnsureMultiplayerPawnComponents(Pawn);
 	}
 }
 

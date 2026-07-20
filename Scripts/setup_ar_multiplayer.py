@@ -171,6 +171,7 @@ def configure_presentation_component(bp) -> None:
         unreal.Vector(15.0, 0.0, 65.0),
     )
     set_prop(presentation, ("b_show_opponent_debug", "bShowOpponentDebug"), False)
+    set_prop(presentation, ("b_place_opponent_in_view", "bPlaceOpponentInView"), False)
     log("Configured SCARMultiplayerPresentation mirror mannequin + FP pose driver")
 
 

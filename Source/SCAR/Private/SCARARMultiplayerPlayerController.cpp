@@ -1,6 +1,7 @@
 #include "SCARARMultiplayerPlayerController.h"
 
 #include "ARBlueprintLibrary.h"
+#include "ARSessionConfig.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
@@ -12,19 +13,23 @@
 #include "SCARAvatarWeaponSyncComponent.h"
 #include "SCARLocalFirstPersonArmsComponent.h"
 #include "SCARRemoteAvatarAnchorComponent.h"
+#include "SCARMultiplayerPawnSetup.h"
 #include "SCARWeaponModdingLauncherSlate.h"
+#include "TimerManager.h"
+#include "UObject/UnrealType.h"
 
 namespace
 {
-	// Before AR multiplayer, FirstPersonCamera used bLockToHmd, which fed the
-	// raw ARKit device pose straight into the render camera every frame --
-	// zero Unreal-side smoothing lag at all (ARKit's own internal sensor
-	// fusion is already clean). Switching to ControlRotation (needed so the
-	// arm/weapon IK and multiplayer body orientation share the exact same
-	// value the camera uses, instead of jittering against it) reintroduced a
-	// small amount of lag via this smoothing step. 24 is tuned to be "high
-	// but finite" -- filtering per-frame noise without *feeling* laggy.
 	constexpr float ARRotationSmoothingSpeed = 24.f;
+
+	bool ShouldUseDeviceARSession()
+	{
+#if PLATFORM_IOS
+		return true;
+#else
+		return false;
+#endif
+	}
 }
 
 ASCARARMultiplayerPlayerController::ASCARARMultiplayerPlayerController()
@@ -65,6 +70,142 @@ void ASCARARMultiplayerPlayerController::BeginPlay()
 	}
 
 	FSCARWeaponModdingLauncherSlate::Show(this);
+
+	if (ShouldUseDeviceARSession())
+	{
+		ScheduleWorldTrackingCheck();
+	}
+}
+
+void ASCARARMultiplayerPlayerController::OnPossess(APawn* InPawn)
+{
+	Super::OnPossess(InPawn);
+
+	if (InPawn)
+	{
+		SCARMultiplayerPawnSetup::EnsureMultiplayerPawnComponents(InPawn);
+	}
+
+	if (IsLocalController() && ShouldUseDeviceARSession())
+	{
+		ScheduleWorldTrackingCheck();
+	}
+}
+
+void ASCARARMultiplayerPlayerController::ScheduleWorldTrackingCheck()
+{
+	if (!IsLocalController() || !ShouldUseDeviceARSession() || bWorldTrackingReady)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	World->GetTimerManager().SetTimer(
+		WorldTrackingTimer,
+		this,
+		&ASCARARMultiplayerPlayerController::EnsureWorldTrackingARSession,
+		2.f,
+		false);
+}
+
+void ASCARARMultiplayerPlayerController::EnsureWorldTrackingARSession()
+{
+	if (!IsLocalController() || !ShouldUseDeviceARSession() || bWorldTrackingReady)
+	{
+		return;
+	}
+
+	if (WorldTrackingAttempts >= 2)
+	{
+		return;
+	}
+
+	++WorldTrackingAttempts;
+
+	static const TCHAR* ConfigPaths[] = {
+		TEXT("/Game/SCAR580/D_ARSessionConfig_BodyTracking.D_ARSessionConfig_BodyTracking"),
+		TEXT("/Game/HandheldAR/D_ARSessionConfig.D_ARSessionConfig"),
+	};
+
+	UARSessionConfig* SourceConfig = nullptr;
+	for (const TCHAR* Path : ConfigPaths)
+	{
+		SourceConfig = LoadObject<UARSessionConfig>(nullptr, Path);
+		if (SourceConfig)
+		{
+			break;
+		}
+	}
+
+	const FARSessionStatus Status = UARBlueprintLibrary::GetARSessionStatus();
+	const bool bRunning = Status.Status == EARSessionStatus::Running;
+	const bool bAlreadyWorld = SourceConfig && SourceConfig->GetSessionType() == EARSessionType::World;
+
+	if (bRunning && bAlreadyWorld)
+	{
+		bWorldTrackingReady = true;
+		return;
+	}
+
+	UARSessionConfig* RuntimeConfig = SourceConfig
+		? DuplicateObject<UARSessionConfig>(SourceConfig, GetTransientPackage())
+		: NewObject<UARSessionConfig>(GetTransientPackage());
+	if (!RuntimeConfig)
+	{
+		return;
+	}
+
+	auto SetBool = [](UObject* Obj, FName Name, bool bVal)
+	{
+		if (FBoolProperty* Prop = FindFProperty<FBoolProperty>(Obj->GetClass(), Name))
+		{
+			Prop->SetPropertyValue_InContainer(Obj, bVal);
+		}
+	};
+	auto SetSessionType = [](UObject* Obj, EARSessionType Type)
+	{
+		if (FEnumProperty* EnumProp = FindFProperty<FEnumProperty>(Obj->GetClass(), TEXT("SessionType")))
+		{
+			void* Ptr = EnumProp->ContainerPtrToValuePtr<void>(Obj);
+			EnumProp->GetUnderlyingProperty()->SetIntPropertyValue(Ptr, static_cast<int64>(Type));
+		}
+		else if (FByteProperty* ByteProp = FindFProperty<FByteProperty>(Obj->GetClass(), TEXT("SessionType")))
+		{
+			ByteProp->SetPropertyValue_InContainer(Obj, static_cast<uint8>(Type));
+		}
+	};
+
+	SetSessionType(RuntimeConfig, EARSessionType::World);
+	SetBool(RuntimeConfig, TEXT("bEnableAutomaticCameraTracking"), true);
+	SetBool(RuntimeConfig, TEXT("bEnableAutomaticCameraOverlay"), true);
+	SetBool(RuntimeConfig, TEXT("bHorizontalPlaneDetection"), true);
+	SetBool(RuntimeConfig, TEXT("bVerticalPlaneDetection"), false);
+	RuntimeConfig->SetEnableAutoFocus(true);
+
+	const bool bNeedsRestart = bRunning && !bAlreadyWorld;
+	if (bNeedsRestart)
+	{
+		UARBlueprintLibrary::StopARSession();
+	}
+
+	UARBlueprintLibrary::StartARSession(RuntimeConfig);
+	bWorldTrackingReady = true;
+
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(
+			9101,
+			5.f,
+			FColor::Cyan,
+			bNeedsRestart
+				? TEXT("SCAR AR: World tracking enabled (walk)")
+				: TEXT("SCAR AR: World tracking session started"));
+	}
 }
 
 void ASCARARMultiplayerPlayerController::NotifyMultiplayerConnectionStatus()

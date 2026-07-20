@@ -23,6 +23,7 @@ public class SCAR : ModuleRules
 				"XRBase",
 				"Sockets",
 				"Networking",
+				"ProceduralMeshComponent",
 			});
 
 		if (Target.Platform == UnrealTargetPlatform.IOS)
