@@ -47,6 +47,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "SCAR|AR Pose")
 	FTransform GetCurrentARPose() const;
 
+	/** After AR world tracking starts on device, place the shared floor + zombies at the player. */
+	void TrySpawnSharedGroundOnDevice();
+
 	/** Session origin for the local viewer pawn, used to place remote players nearby. */
 	static FTransform GetLocalViewerSessionOrigin(const UWorld* World);
 

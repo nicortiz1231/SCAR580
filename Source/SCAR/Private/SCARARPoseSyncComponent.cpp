@@ -321,17 +321,45 @@ bool USCARARPoseSyncComponent::SampleARPose(FTransform& OutPose) const
 
 void USCARARPoseSyncComponent::CaptureSessionOriginIfNeeded(const FTransform& CurrentPose)
 {
+#if PLATFORM_IOS || PLATFORM_ANDROID
+	// On device, wait for ARKit world tracking before placing the floor/zombie ring.
+	if (!IsARSessionActive())
+	{
+		return;
+	}
+#endif
+
 	if (!bHasLocalSessionOrigin)
 	{
 		LocalSessionOrigin = CurrentPose;
 		bHasLocalSessionOrigin = true;
-		SpawnSharedGroundIfNeeded(CurrentPose);
 	}
+
+	SpawnSharedGroundIfNeeded(CurrentPose);
+}
+
+void USCARARPoseSyncComponent::TrySpawnSharedGroundOnDevice()
+{
+#if PLATFORM_IOS || PLATFORM_ANDROID
+	if (!IsARSessionActive())
+	{
+		return;
+	}
+
+	FTransform ARPose;
+	if (!SampleARPose(ARPose))
+	{
+		return;
+	}
+
+	const FTransform BodyPose = BuildMultiplayerBodyPose(ARPose);
+	CaptureSessionOriginIfNeeded(BodyPose);
+#endif
 }
 
 void USCARARPoseSyncComponent::SpawnSharedGroundIfNeeded(const FTransform& BodyPose)
 {
-	if (!bSpawnSharedGround || SpawnedSharedGround.IsValid())
+	if (!bSpawnSharedGround)
 	{
 		return;
 	}
@@ -356,6 +384,11 @@ void USCARARPoseSyncComponent::SpawnSharedGroundIfNeeded(const FTransform& BodyP
 	{
 		Existing->PlaceAt(OriginLocation, SurfaceZ);
 		SpawnedSharedGround = Existing;
+		return;
+	}
+
+	if (SpawnedSharedGround.IsValid())
+	{
 		return;
 	}
 

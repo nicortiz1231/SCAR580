@@ -13,6 +13,7 @@
 #include "SCARMultiplayerCombatComponent.h"
 #include "SCARMultiplayerHealthComponent.h"
 #include "SCARMultiplayerPresentationComponent.h"
+#include "SCARHorrorKitZombieCombatComponent.h"
 #include "SCARSharedARGround.h"
 
 namespace SCARMultiplayerPawnSetup
@@ -65,10 +66,7 @@ namespace SCARMultiplayerPawnSetup
 			return;
 		}
 
-#if PLATFORM_IOS
-		return;
-#endif
-
+#if !PLATFORM_IOS
 		FActorSpawnParameters SpawnParams;
 		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
@@ -92,6 +90,7 @@ namespace SCARMultiplayerPawnSetup
 				FColor::Green,
 				TEXT("SCAR: Multiplayer floor spawned (Z=0)"));
 		}
+#endif
 	}
 
 	void SnapPawnToGround(APawn* Pawn)
@@ -154,6 +153,7 @@ namespace SCARMultiplayerPawnSetup
 		EnsureComponent<USCARMultiplayerPresentationComponent>(Pawn, TEXT("SCARMultiplayerPresentation"));
 		EnsureComponent<USCARMultiplayerHealthComponent>(Pawn, TEXT("SCARMultiplayerHealth"));
 		EnsureComponent<USCARMultiplayerCombatComponent>(Pawn, TEXT("SCARMultiplayerCombat"));
+		EnsureComponent<USCARHorrorKitZombieCombatComponent>(Pawn, TEXT("SCARHorrorKitZombieCombat"));
 
 		if (ACharacter* Character = Cast<ACharacter>(Pawn))
 		{

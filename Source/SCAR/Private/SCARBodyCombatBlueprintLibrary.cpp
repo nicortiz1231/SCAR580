@@ -2,6 +2,7 @@
 
 #include "Engine/World.h"
 #include "SCARBodyCombatSubsystem.h"
+#include "SCARHorrorKitZombieBlueprintLibrary.h"
 
 USCARBodyCombatSubsystem* USCARBodyCombatBlueprintLibrary::GetBodyCombatSubsystem(const UObject* WorldContextObject)
 {
@@ -26,6 +27,14 @@ FSCARBodyCombatHitResult USCARBodyCombatBlueprintLibrary::TryApplyARBodyShot(
 	const float CriticalMultiplier,
 	const bool bRequirePersonInPreview)
 {
+	if (const FSCARZombieHitResult ZombieHit = USCARHorrorKitZombieBlueprintLibrary::TryApplyZombieHitScan(
+		WorldContextObject,
+		BaseDamage);
+		ZombieHit.bHit)
+	{
+		return FSCARBodyCombatHitResult();
+	}
+
 	if (USCARBodyCombatSubsystem* Subsystem = GetBodyCombatSubsystem(WorldContextObject))
 	{
 		return Subsystem->TryApplyShot(
@@ -47,6 +56,19 @@ FSCARBodyCombatHitResult USCARBodyCombatBlueprintLibrary::TryApplyARBodyShotAfte
 	const bool bOnlyWhenPhysicsMissesEnemy,
 	const bool bRequirePersonInPreview)
 {
+	if (bPhysicsBlockingHit)
+	{
+		if (const FSCARZombieHitResult ZombieHit = USCARHorrorKitZombieBlueprintLibrary::TryApplyZombieHitAfterPhysicsHit(
+			WorldContextObject,
+			BaseDamage,
+			PhysicsHit,
+			bPhysicsBlockingHit);
+			ZombieHit.bHit)
+		{
+			return FSCARBodyCombatHitResult();
+		}
+	}
+
 	if (bOnlyWhenPhysicsMissesEnemy && bPhysicsBlockingHit)
 	{
 		if (const AActor* HitActor = PhysicsHit.GetActor())

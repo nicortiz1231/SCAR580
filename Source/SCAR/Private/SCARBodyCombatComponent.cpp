@@ -2,6 +2,7 @@
 
 #include "Engine/World.h"
 #include "SCARBodyCombatSubsystem.h"
+#include "SCARHorrorKitZombieBlueprintLibrary.h"
 
 USCARBodyCombatComponent::USCARBodyCombatComponent()
 {
@@ -61,6 +62,16 @@ FSCARBodyCombatHitResult USCARBodyCombatComponent::ProcessWeaponHitScan(
 {
 	if (!ShouldTryARBodyShot(PhysicsHit, bPhysicsBlockingHit))
 	{
+		if (const FSCARZombieHitResult ZombieHit = USCARHorrorKitZombieBlueprintLibrary::TryApplyZombieHitAfterPhysicsHit(
+			this,
+			BaseDamage,
+			PhysicsHit,
+			bPhysicsBlockingHit);
+			ZombieHit.bHit)
+		{
+			return FSCARBodyCombatHitResult();
+		}
+
 		return FSCARBodyCombatHitResult();
 	}
 

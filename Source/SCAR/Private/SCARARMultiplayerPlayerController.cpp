@@ -10,6 +10,7 @@
 #include "SCARARMultiplayerBlueprintLibrary.h"
 #include "SCARARMultiplayerMenuWidget.h"
 #include "SCARARMultiplayerSlateMenu.h"
+#include "SCARARPoseSyncComponent.h"
 #include "SCARAvatarWeaponSyncComponent.h"
 #include "SCARLocalFirstPersonArmsComponent.h"
 #include "SCARRemoteAvatarAnchorComponent.h"
@@ -380,6 +381,33 @@ void ASCARARMultiplayerPlayerController::EnsureWorldTrackingARSession()
 
 	UARBlueprintLibrary::StartARSession(RuntimeConfig);
 	bWorldTrackingReady = true;
+
+	if (APawn* Pawn = GetPawn())
+	{
+		if (USCARARPoseSyncComponent* PoseSync = Pawn->FindComponentByClass<USCARARPoseSyncComponent>())
+		{
+			PoseSync->TrySpawnSharedGroundOnDevice();
+		}
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimer(
+			WorldTrackingTimer,
+			FTimerDelegate::CreateWeakLambda(this, [this]()
+			{
+				if (APawn* RetryPawn = GetPawn())
+				{
+					if (USCARARPoseSyncComponent* PoseSync =
+							RetryPawn->FindComponentByClass<USCARARPoseSyncComponent>())
+					{
+						PoseSync->TrySpawnSharedGroundOnDevice();
+					}
+				}
+			}),
+			0.75f,
+			false);
+	}
 
 	if (GEngine)
 	{
