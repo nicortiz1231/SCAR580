@@ -100,11 +100,11 @@ void ASCARHorrorKitZombieDirector::PrepareEnemyForDirectChase(ACharacter* Enemy)
 
 	if (UCharacterMovementComponent* Move = Enemy->GetCharacterMovement())
 	{
+		// Match FirstPersonHorrorKit BP_Enemy CDO: MaxWalkSpeed=300, MaxAcceleration=250.
 		Move->MaxWalkSpeed = ChaseWalkSpeed;
-		Move->MaxAcceleration = 2048.f;
-		Move->BrakingDecelerationWalking = 2048.f;
+		Move->MaxAcceleration = 250.f;
 		Move->bOrientRotationToMovement = true;
-		Move->RotationRate = FRotator(0.f, 720.f, 0.f);
+		Move->RotationRate = FRotator(0.f, 480.f, 0.f);
 		Move->bUseControllerDesiredRotation = false;
 		Move->bUseRVOAvoidance = false;
 		Move->SetMovementMode(MOVE_Walking);
@@ -223,12 +223,7 @@ void ASCARHorrorKitZombieDirector::DriveEnemies(float DeltaSeconds)
 
 		if (DistSq > AttackRangeCmSq)
 		{
-			if (UCharacterMovementComponent* Move = Enemy->GetCharacterMovement())
-			{
-				Move->MaxWalkSpeed = ChaseWalkSpeed;
-				// Direct move is more reliable than AddMovementInput for AI chase.
-				Move->RequestDirectMove(Dir * ChaseWalkSpeed, /*bForceMaxSpeed=*/true);
-			}
+			Enemy->AddMovementInput(Dir, 1.f);
 		}
 		else if (Cooldown <= 0.f)
 		{
@@ -328,15 +323,17 @@ void ASCARHorrorKitZombieDirector::SpawnEnemiesIfNeeded(const ASCARSharedARGroun
 	{
 		GEngine->AddOnScreenDebugMessage(
 			9200,
-			8.f,
+			12.f,
 			FColor::Green,
-			FString::Printf(TEXT("SCAR: %d kit zombies chasing"), SpawnedEnemies.Num()));
+			FString::Printf(
+				TEXT("SCAR zombies: kit walk speed %.0f cm/s (restart editor if still fast)"),
+				ChaseWalkSpeed));
 	}
 
 	UE_LOG(
 		LogTemp,
 		Warning,
-		TEXT("SCAR HorrorKit: spawned %d/%d zombies — direct chase @ %.0f cm/s"),
+		TEXT("SCAR HorrorKit: spawned %d/%d zombies — kit default walk %.0f cm/s"),
 		SpawnedEnemies.Num(),
 		EnemyCount,
 		ChaseWalkSpeed);

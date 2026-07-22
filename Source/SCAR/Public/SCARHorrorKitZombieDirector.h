@@ -26,8 +26,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|HorrorKit", meta = (ClampMin = "100"))
 	float SpawnRadiusCm = 900.f;
 
+	/** Kit BP_Enemy CharacterMovement default (300). Keep this for the natural walk pace. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|HorrorKit", meta = (ClampMin = "50"))
-	float ChaseWalkSpeed = 650.f;
+	float ChaseWalkSpeed = 300.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SCAR|HorrorKit", meta = (ClampMin = "50"))
 	float AttackRangeCm = 160.f;
