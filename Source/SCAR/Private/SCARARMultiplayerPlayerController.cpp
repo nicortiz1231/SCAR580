@@ -14,13 +14,24 @@
 #include "SCARLocalFirstPersonArmsComponent.h"
 #include "SCARRemoteAvatarAnchorComponent.h"
 #include "SCARMultiplayerPawnSetup.h"
+#include "SCARInventoryBlueprintLibrary.h"
+#include "SCARInventoryLauncherSlate.h"
 #include "SCARWeaponModdingLauncherSlate.h"
+#include "GameFramework/TouchInterface.h"
+#include "Components/InputComponent.h"
+#include "InputCoreTypes.h"
+#include "InputKeyEventArgs.h"
 #include "TimerManager.h"
 #include "UObject/UnrealType.h"
 
 namespace
 {
 	constexpr float ARRotationSmoothingSpeed = 24.f;
+
+#if PLATFORM_IOS || PLATFORM_ANDROID
+	static const TCHAR* MobileTouchInterfacePath =
+		TEXT("/Game/SCAR580/Input/TI_MobileCombat.TI_MobileCombat");
+#endif
 
 	bool ShouldUseDeviceARSession()
 	{
@@ -70,11 +81,180 @@ void ASCARARMultiplayerPlayerController::BeginPlay()
 	}
 
 	FSCARWeaponModdingLauncherSlate::Show(this);
+	FSCARInventoryLauncherSlate::Show(this);
+
+	// Mobile Slate launcher buttons require touch routing while in GameOnly mode.
+	bEnableClickEvents = true;
+	bEnableTouchEvents = true;
+
+	EnsureMobileTouchInterface();
 
 	if (ShouldUseDeviceARSession())
 	{
 		ScheduleWorldTrackingCheck();
 	}
+}
+
+void ASCARARMultiplayerPlayerController::SetupInputComponent()
+{
+	Super::SetupInputComponent();
+	// Tab / B are handled in InputKey so they still work while the inventory
+	// menu is open (GameAndUI), which can swallow normal BindKey callbacks.
+}
+
+bool ASCARARMultiplayerPlayerController::InputKey(const FInputKeyEventArgs& Params)
+{
+	if (IsLocalController() && Params.Event == IE_Pressed && Params.Key == EKeys::Tab)
+	{
+		OnToggleInventoryPressed();
+		return true;
+	}
+
+#if PLATFORM_IOS || PLATFORM_ANDROID
+	// iOS routes screen taps through LeftMouseButton — treat top-right launcher as Tab.
+	if (IsLocalController() && Params.Event == IE_Pressed && Params.Key == EKeys::LeftMouseButton)
+	{
+		float TouchX = 0.f;
+		float TouchY = 0.f;
+		bool bTouchDown = false;
+		GetInputTouchState(ETouchIndex::Touch1, TouchX, TouchY, bTouchDown);
+		if (bTouchDown)
+		{
+			int32 SizeX = 0;
+			int32 SizeY = 0;
+			GetViewportSize(SizeX, SizeY);
+			if (FSCARInventoryLauncherSlate::HitTestScreenPoint(FVector2D(TouchX, TouchY), SizeX, SizeY))
+			{
+				OnToggleInventoryPressed();
+				return true;
+			}
+		}
+	}
+#endif
+
+	// Pause menu: swallow gameplay keys so clicks/keys don't fire weapons or move pawn.
+	if (IsLocalController() && USCARInventoryBlueprintLibrary::IsInventoryMenuOpen(this))
+	{
+		if (Params.Key.IsMouseButton())
+		{
+			return true;
+		}
+	}
+
+	return Super::InputKey(Params);
+}
+
+bool ASCARARMultiplayerPlayerController::InputTouch(
+	const FTouchId TouchId,
+	const ETouchType::Type Type,
+	const FVector2D& TouchLocation,
+	const float Force,
+	const uint64 Timestamp)
+{
+	if (IsLocalController() && Type == ETouchType::Began)
+	{
+		int32 SizeX = 0;
+		int32 SizeY = 0;
+		GetViewportSize(SizeX, SizeY);
+		if (FSCARInventoryLauncherSlate::HitTestScreenPoint(TouchLocation, SizeX, SizeY))
+		{
+			OnToggleInventoryPressed();
+			return true;
+		}
+	}
+
+	return Super::InputTouch(TouchId, Type, TouchLocation, Force, Timestamp);
+}
+
+void ASCARARMultiplayerPlayerController::OnToggleInventoryPressed()
+{
+	if (!IsLocalController() || !FSCARInventoryLauncherSlate::ShouldAcceptToggleHotkey())
+	{
+		return;
+	}
+
+	USCARInventoryBlueprintLibrary::ToggleInventoryMenu(this);
+}
+
+void ASCARARMultiplayerPlayerController::EnsureMobileTouchInterface()
+{
+#if PLATFORM_IOS || PLATFORM_ANDROID
+	if (bMobileTouchInterfaceReady)
+	{
+		return;
+	}
+
+	UTouchInterface* BaseTI = LoadObject<UTouchInterface>(nullptr, MobileTouchInterfacePath);
+	if (!BaseTI)
+	{
+		return;
+	}
+
+	UTouchInterface* TI = DuplicateObject<UTouchInterface>(BaseTI, this);
+	if (!TI)
+	{
+		return;
+	}
+
+	bool bHasTabZone = false;
+	for (const FTouchInputControl& Control : TI->Controls)
+	{
+		if (Control.MainInputKey == EKeys::Tab)
+		{
+			bHasTabZone = true;
+			break;
+		}
+	}
+
+	if (!bHasTabZone)
+	{
+		FTouchInputControl TabZone;
+		TabZone.bTreatAsButton = true;
+		TabZone.Center = FVector2D(0.88f, 0.10f);
+		TabZone.VisualSize = FVector2D(0.16f, 0.16f);
+		TabZone.ThumbSize = FVector2D(0.16f, 0.16f);
+		TabZone.InteractionSize = FVector2D(0.20f, 0.20f);
+		TabZone.InputScale = FVector2D(1.f, 1.f);
+		TabZone.MainInputKey = EKeys::Tab;
+		TI->Controls.Add(TabZone);
+	}
+
+	ActivateTouchInterface(TI);
+	bMobileTouchInterfaceReady = true;
+#endif
+}
+
+void ASCARARMultiplayerPlayerController::PollMobileInventoryLauncher()
+{
+#if PLATFORM_IOS || PLATFORM_ANDROID
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	int32 SizeX = 0;
+	int32 SizeY = 0;
+	GetViewportSize(SizeX, SizeY);
+
+	for (int32 FingerIndex = 0; FingerIndex < MaxInventoryTouchFingers; ++FingerIndex)
+	{
+		float LocationX = 0.f;
+		float LocationY = 0.f;
+		bool bIsPressed = false;
+		GetInputTouchState(static_cast<ETouchIndex::Type>(FingerIndex), LocationX, LocationY, bIsPressed);
+
+		const bool bWasPressed = InventoryTouchWasDown[FingerIndex];
+		if (bIsPressed && !bWasPressed)
+		{
+			if (FSCARInventoryLauncherSlate::HitTestScreenPoint(FVector2D(LocationX, LocationY), SizeX, SizeY))
+			{
+				OnToggleInventoryPressed();
+			}
+		}
+
+		InventoryTouchWasDown[FingerIndex] = bIsPressed;
+	}
+#endif
 }
 
 void ASCARARMultiplayerPlayerController::OnPossess(APawn* InPawn)
@@ -89,6 +269,11 @@ void ASCARARMultiplayerPlayerController::OnPossess(APawn* InPawn)
 	if (IsLocalController() && ShouldUseDeviceARSession())
 	{
 		ScheduleWorldTrackingCheck();
+	}
+
+	if (IsLocalController())
+	{
+		EnsureMobileTouchInterface();
 	}
 }
 
@@ -311,6 +496,11 @@ void ASCARARMultiplayerPlayerController::PlayerTick(float DeltaTime)
 	EnsureLocalFirstPersonArms();
 	EnsureRemoteAvatarAnchor();
 	EnsureAvatarWeaponSync();
+
+	// Keep vitals/hotbar removed and pause-backpack visibility in sync every frame.
+	USCARInventoryBlueprintLibrary::TickInventoryPresentation(this);
+
+	PollMobileInventoryLauncher();
 
 	const FARSessionStatus SessionStatus = UARBlueprintLibrary::GetARSessionStatus();
 	if (SessionStatus.Status != EARSessionStatus::Running)

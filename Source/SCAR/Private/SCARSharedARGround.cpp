@@ -1,10 +1,13 @@
 #include "SCARSharedARGround.h"
 
+#include "Components/BoxComponent.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "NavigationSystem.h"
 #include "Net/UnrealNetwork.h"
 #include "ProceduralMeshComponent.h"
+#include "SCARHorrorKitZombieDirector.h"
 
 ASCARSharedARGround::ASCARSharedARGround()
 {
@@ -19,12 +22,41 @@ ASCARSharedARGround::ASCARSharedARGround()
 	FloorMesh->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
 	FloorMesh->SetCastShadow(true);
 	FloorMesh->SetHiddenInGame(false);
+	// ProceduralMesh often reports empty nav bounds at runtime — use NavFloor instead.
+	FloorMesh->SetCanEverAffectNavigation(false);
+
+	NavFloor = CreateDefaultSubobject<UBoxComponent>(TEXT("NavFloor"));
+	NavFloor->SetupAttachment(FloorMesh);
+	NavFloor->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	NavFloor->SetCollisionObjectType(ECC_WorldStatic);
+	NavFloor->SetCollisionResponseToAllChannels(ECR_Block);
+	NavFloor->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+	NavFloor->SetHiddenInGame(true);
+	NavFloor->SetCanEverAffectNavigation(true);
+	NavFloor->bDynamicObstacle = false;
 }
 
 void ASCARSharedARGround::BeginPlay()
 {
 	Super::BeginPlay();
 	BuildFloorMesh();
+}
+
+void ASCARSharedARGround::UpdateNavFloor()
+{
+	if (!NavFloor)
+	{
+		return;
+	}
+
+	const float Thickness = 20.f;
+	// Box extent is half-size; match the visible floor footprint and thickness.
+	NavFloor->SetBoxExtent(FVector(HalfExtentCm, HalfExtentCm, Thickness * 0.5f), false);
+	NavFloor->SetRelativeLocation(FVector(0.f, 0.f, Thickness * 0.5f));
+	NavFloor->UpdateBounds();
+	NavFloor->SetCanEverAffectNavigation(true);
+
+	FNavigationSystem::UpdateComponentData(*NavFloor);
 }
 
 void ASCARSharedARGround::BuildFloorMesh()
@@ -85,6 +117,9 @@ void ASCARSharedARGround::BuildFloorMesh()
 	FloorMesh->SetLightingChannels(true, true, true);
 	FloorMesh->SetCastShadow(false);
 	FloorMesh->SetReceivesDecals(false);
+	FloorMesh->SetCanEverAffectNavigation(false);
+
+	UpdateNavFloor();
 }
 
 void ASCARSharedARGround::PlaceAt(const FVector& OriginXY, const float SurfaceWorldZ)
@@ -92,6 +127,12 @@ void ASCARSharedARGround::PlaceAt(const FVector& OriginXY, const float SurfaceWo
 	GroundSurfaceZ = SurfaceWorldZ;
 	const float Thickness = 20.f;
 	SetActorLocation(FVector(OriginXY.X, OriginXY.Y, SurfaceWorldZ - Thickness));
+	UpdateNavFloor();
+
+	if (ASCARHorrorKitZombieDirector* Director = ASCARHorrorKitZombieDirector::EnsureInWorld(GetWorld()))
+	{
+		Director->SyncToGround(this);
+	}
 }
 
 void ASCARSharedARGround::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const

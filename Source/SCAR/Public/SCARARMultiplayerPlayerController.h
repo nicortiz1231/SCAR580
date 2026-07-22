@@ -53,25 +53,32 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void SetupInputComponent() override;
+	virtual bool InputKey(const FInputKeyEventArgs& Params) override;
+	virtual bool InputTouch(
+		const FTouchId TouchId,
+		const ETouchType::Type Type,
+		const FVector2D& TouchLocation,
+		const float Force,
+		const uint64 Timestamp) override;
 	virtual void OnPossess(APawn* InPawn) override;
 	virtual void PlayerTick(float DeltaTime) override;
+
+	/** Tab — open/close pause inventory menu. */
+	void OnToggleInventoryPressed();
+
+	/** Duplicate TI_MobileCombat and inject a top-right Tab zone at runtime. */
+	void EnsureMobileTouchInterface();
+
+	/** Poll top-right Inventory launcher touches on mobile. */
+	void PollMobileInventoryLauncher();
 
 private:
 	UPROPERTY()
 	TObjectPtr<USCARARMultiplayerMenuWidget> MultiplayerMenuWidget;
 
-	// BP_FPCharacter has no SCS slot for USCARLocalFirstPersonArmsComponent
-	// (it's a marketplace Blueprint asset), so it's attached dynamically here
-	// the same way USCARMultiplayerPresentationComponent dynamically creates
-	// its opponent pose-driver mesh -- no Blueprint editing required.
 	void EnsureLocalFirstPersonArms();
-
-	// Attaches USCARRemoteAvatarAnchorComponent to this controller so remote
-	// avatars stay anchored to the real world when the local phone rolls.
 	void EnsureRemoteAvatarAnchor();
-
-	// Attaches USCARAvatarWeaponSyncComponent to this controller so remote
-	// avatars visibly hold the weapon their player actually has equipped.
 	void EnsureAvatarWeaponSync();
 
 	/** Upgrade PoseTracking AR session to World tracking so walking translates XYZ. iOS only. */
@@ -82,17 +89,10 @@ private:
 	int32 WorldTrackingAttempts = 0;
 	FTimerHandle WorldTrackingTimer;
 
-	// FirstPersonCamera drives its rotation via bUsePawnControlRotation (reads
-	// ControlRotation), while its bLockToHmd flag independently overrides the
-	// camera's own transform straight from the raw ARKit device pose every
-	// frame -- completely bypassing ControlRotation. The FPS arms/weapon IK
-	// aiming, however, is driven by GetControlRotation(), so without this fix
-	// the arms stay aimed wherever ControlRotation last was (effectively
-	// fixed to the screen) while the camera itself freely follows the phone.
-	// We disable bLockToHmd (done once on BeginPlay) and instead drive
-	// ControlRotation directly from a lightly smoothed AR device pose each
-	// tick, so the camera and the arm/weapon IK always read the exact same,
-	// live, jitter-reduced rotation.
 	bool bHasSmoothedARRotation = false;
 	FRotator SmoothedARRotation = FRotator::ZeroRotator;
+
+	bool bMobileTouchInterfaceReady = false;
+	static constexpr int32 MaxInventoryTouchFingers = 10;
+	bool InventoryTouchWasDown[MaxInventoryTouchFingers] = {};
 };

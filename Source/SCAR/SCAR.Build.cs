@@ -24,6 +24,8 @@ public class SCAR : ModuleRules
 				"Sockets",
 				"Networking",
 				"ProceduralMeshComponent",
+				"AIModule",
+				"NavigationSystem",
 			});
 
 		if (Target.Platform == UnrealTargetPlatform.IOS)

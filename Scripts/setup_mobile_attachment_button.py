@@ -13,6 +13,9 @@ BOTTOM_Y = -(VISUAL_SIZE / 2.0)
 ATTACH_X = 0.12
 ATTACH_Y = 0.10
 ATTACH_SIZE = 0.16
+INVENTORY_X = 0.88
+INVENTORY_Y = 0.10
+INVENTORY_SIZE = 0.16
 
 
 def log(msg: str) -> None:
@@ -53,6 +56,7 @@ def main() -> None:
         make_button(CENTER_X, BOTTOM_Y, "R", VISUAL_SIZE),
         make_button(RIGHT_X, BOTTOM_Y, "LeftMouseButton", VISUAL_SIZE),
         make_button(ATTACH_X, ATTACH_Y, "X", ATTACH_SIZE),
+        make_button(INVENTORY_X, INVENTORY_Y, "Tab", INVENTORY_SIZE),
     ]
     ti.set_editor_property("controls", controls)
     ti.set_editor_property("active_opacity", 0.35)
@@ -63,7 +67,7 @@ def main() -> None:
     ti.set_editor_property("startup_delay", 0.0)
 
     unreal.EditorAssetLibrary.save_asset(TI_PATH, only_if_is_dirty=False)
-    log("Added top-left X touch zone + raised touch opacity on TI_MobileCombat")
+    log("Added top-left X + top-right Tab touch zones on TI_MobileCombat")
 
 
 main()

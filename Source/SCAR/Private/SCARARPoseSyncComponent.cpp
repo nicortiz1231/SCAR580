@@ -167,14 +167,26 @@ void USCARARPoseSyncComponent::TickComponent(
 		}
 		else
 		{
-			const FVector CurrentLocation = Pawn->GetActorLocation();
-			const FVector SnappedLocation = SnapLocationToSharedGround(CurrentLocation);
-			if (!FMath::IsNearlyEqual(CurrentLocation.Z, SnappedLocation.Z, 0.5f))
+			if (ACharacter* Character = Cast<ACharacter>(Pawn))
 			{
-				Pawn->SetActorLocation(FVector(CurrentLocation.X, CurrentLocation.Y, SnappedLocation.Z));
+				if (UCharacterMovementComponent* Movement = Character->GetCharacterMovement())
+				{
+					// AR avatars are pose-driven — gravity + per-frame Z snaps cause visible bobbing.
+					Movement->GravityScale = 0.f;
+					Movement->Velocity.Z = 0.f;
+				}
 			}
 
-			SCARAvatarGrounding::SnapPawnFeetToGround(Pawn);
+			const FVector CurrentLocation = Pawn->GetActorLocation();
+			const FVector SnappedLocation = SnapLocationToSharedGround(CurrentLocation);
+			if (!FMath::IsNearlyEqual(CurrentLocation.Z, SnappedLocation.Z, 2.f))
+			{
+				Pawn->SetActorLocation(
+					FVector(CurrentLocation.X, CurrentLocation.Y, SnappedLocation.Z),
+					false,
+					nullptr,
+					ETeleportType::TeleportPhysics);
+			}
 		}
 	}
 	else
